@@ -1419,6 +1419,24 @@
             ctx.lineTo(center, vizSize);
             ctx.stroke();
             
+            // Smooth an array using moving average
+            function smoothArray(arr, windowSize = 5) {
+                const result = [];
+                for (let i = 0; i < arr.length; i++) {
+                    let sum = 0;
+                    let count = 0;
+                    for (let j = -Math.floor(windowSize / 2); j <= Math.floor(windowSize / 2); j++) {
+                        const idx = (i + j + arr.length) % arr.length;
+                        if (arr[idx] !== null) {
+                            sum += arr[idx];
+                            count++;
+                        }
+                    }
+                    result[i] = count > 0 ? sum / count : null;
+                }
+                return result;
+            }
+            
             // Function to draw smooth averaged shape
             function drawShape(dataArray, color, isDashed = false) {
                 if (dataArray.length === 0) return;
@@ -1434,6 +1452,9 @@
                         const angle = Math.atan2(point.y, point.x);
                         const radius = Math.sqrt(point.x * point.x + point.y * point.y);
                         
+                        // Skip extreme outliers (probably noise)
+                        if (radius > 15) return; // Skip points more than 15 units from center
+                        
                         // Map angle [-π, π] to bin index [0, numBins)
                         let binIndex = Math.floor(((angle + Math.PI) / (2 * Math.PI)) * numBins);
                         binIndex = ((binIndex % numBins) + numBins) % numBins; // Handle wrap-around
@@ -1442,10 +1463,18 @@
                     });
                 });
                 
-                // Calculate average radius for each bin
+                // Calculate median radius for each bin (more robust than mean)
                 const avgRadii = bins.map(bin => {
                     if (bin.length === 0) return null;
-                    return bin.reduce((sum, r) => sum + r, 0) / bin.length;
+                    
+                    // Use median to be robust against outliers
+                    const sorted = [...bin].sort((a, b) => a - b);
+                    const mid = Math.floor(sorted.length / 2);
+                    if (sorted.length % 2 === 0) {
+                        return (sorted[mid - 1] + sorted[mid]) / 2;
+                    } else {
+                        return sorted[mid];
+                    }
                 });
                 
                 // Fill gaps by interpolating from neighboring bins
@@ -1454,7 +1483,7 @@
                     
                     // Find nearest non-null bins
                     let prevIdx = -1, nextIdx = -1;
-                    const maxGap = 30;
+                    const maxGap = 45; // Allow larger gaps
                     
                     for (let j = 1; j <= maxGap; j++) {
                         const prevI = (i - j + avgRadii.length) % avgRadii.length;
@@ -1484,7 +1513,9 @@
                         if (totalDist === 0) totalDist = 1;
                         
                         const t = distFromPrev / totalDist;
-                        avgRadii[i] = prevR + (nextR - prevR) * t;
+                        // Use cubic interpolation for smoother curves
+                        const smoothT = t * t * (3 - 2 * t);
+                        avgRadii[i] = prevR + (nextR - prevR) * smoothT;
                     } else if (prevIdx !== -1) {
                         avgRadii[i] = avgRadii[prevIdx];
                     } else if (nextIdx !== -1) {
@@ -1492,54 +1523,44 @@
                     }
                 }
                 
+                // Apply multiple passes of smoothing for very smooth curves
+                let smoothedRadii = avgRadii;
+                for (let pass = 0; pass < 3; pass++) {
+                    smoothedRadii = smoothArray(smoothedRadii, 11);
+                }
+                
                 // Convert bins to drawing points
                 const points = [];
-                for (let i = 0; i < avgRadii.length; i++) {
-                    if (avgRadii[i] !== null) {
+                for (let i = 0; i < smoothedRadii.length; i++) {
+                    if (smoothedRadii[i] !== null) {
                         const angle = (i / numBins) * 2 * Math.PI - Math.PI;
                         points.push({
-                            x: center + avgRadii[i] * Math.cos(angle) * scale,
-                            y: center - avgRadii[i] * Math.sin(angle) * scale
+                            x: center + smoothedRadii[i] * Math.cos(angle) * scale,
+                            y: center - smoothedRadii[i] * Math.sin(angle) * scale
                         });
                     }
                 }
                 
                 if (points.length === 0) return;
                 
-                // Draw filled shape
-                ctx.fillStyle = color + '33'; // More transparent
-                ctx.beginPath();
-                points.forEach((p, i) => {
-                    if (i === 0) {
-                        ctx.moveTo(p.x, p.y);
-                    } else {
-                        ctx.lineTo(p.x, p.y);
-                    }
-                });
-                ctx.closePath();
-                ctx.fill();
-                
-                // Draw outline
-                ctx.strokeStyle = color;
-                ctx.lineWidth = 2.5;
-                if (isDashed) {
-                    ctx.setLineDash([8, 5]);
-                } else {
-                    ctx.setLineDash([]);
-                }
-                ctx.stroke();
-                ctx.setLineDash([]); // Reset
-                
-                // Draw individual participant shapes as thin gray lines
-                ctx.strokeStyle = '#cccccc';
-                ctx.lineWidth = 0.8;
-                ctx.globalAlpha = 0.3;
+                // Draw individual participant shapes as thin gray lines (with outlier filtering)
+                ctx.strokeStyle = '#dddddd';
+                ctx.lineWidth = 0.5;
+                ctx.globalAlpha = 0.25;
                 
                 dataArray.forEach(d => {
                     if (d.contour.length === 0) return;
                     
+                    // Filter out extreme outliers from individual shapes too
+                    const filteredContour = d.contour.filter(point => {
+                        const radius = Math.sqrt(point.x * point.x + point.y * point.y);
+                        return radius <= 10; // More strict filtering for display
+                    });
+                    
+                    if (filteredContour.length < 3) return;
+                    
                     ctx.beginPath();
-                    d.contour.forEach((point, i) => {
+                    filteredContour.forEach((point, i) => {
                         const x = center + point.x * scale;
                         const y = center - point.y * scale;
                         if (i === 0) {
@@ -1553,6 +1574,39 @@
                 });
                 
                 ctx.globalAlpha = 1.0;
+                
+                // Draw filled averaged shape
+                ctx.fillStyle = color + '26'; // Semi-transparent
+                ctx.beginPath();
+                points.forEach((p, i) => {
+                    if (i === 0) {
+                        ctx.moveTo(p.x, p.y);
+                    } else {
+                        ctx.lineTo(p.x, p.y);
+                    }
+                });
+                ctx.closePath();
+                ctx.fill();
+                
+                // Draw outline with thicker, more visible line
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 3;
+                if (isDashed) {
+                    ctx.setLineDash([10, 6]);
+                } else {
+                    ctx.setLineDash([]);
+                }
+                ctx.beginPath();
+                points.forEach((p, i) => {
+                    if (i === 0) {
+                        ctx.moveTo(p.x, p.y);
+                    } else {
+                        ctx.lineTo(p.x, p.y);
+                    }
+                });
+                ctx.closePath();
+                ctx.stroke();
+                ctx.setLineDash([]); // Reset
             }
             
             // Draw blue shape first (so red is on top)
