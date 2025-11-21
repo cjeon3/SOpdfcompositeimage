@@ -1373,12 +1373,11 @@
         function averageContours(dataArray) {
             if (dataArray.length === 0) return null;
             
+            // Contours are already normalized (relative to their own centroid) by the worker
+            // So we can use them directly
             const normalizedData = dataArray.map(d => ({
                 ...d,
-                normalizedContour: d.contour.map(p => ({
-                    x: p.x - d.centroid.x,
-                    y: p.y - d.centroid.y
-                }))
+                normalizedContour: d.contour // Already normalized!
             }));
             
             const numBins = 360;
