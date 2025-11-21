@@ -265,7 +265,7 @@
         const UNIT_RANGE = 10;
         const SCALE_FACTOR = CANVAS_SIZE / (2 * UNIT_RANGE);
         const BACKGROUND_CIRCLE_RADIUS_UNITS = 8.66;
-        const FREQUENCIES = [125, 250, 500, 750, 1000, 1500, 2000, 3000, 4000, 8000];
+        const FREQUENCIES = [31, 62.5, 125, 250, 500, 1000, 2000, 4000, 8000, 12000, 16000];
         
         // Detect CPU cores for optimal parallelization
         const CPU_CORES = navigator.hardwareConcurrency || 4;
@@ -568,7 +568,8 @@
                 minY = Math.max(0, minY - 20);
                 maxY = Math.min(height, maxY + 20);
                 
-                const drawnPixels = [];
+                const redPixels = [];
+                const bluePixels = [];
                 const whiteThreshold = 240;
                 const grayMin = 140;
                 const grayMax = 200;
@@ -594,58 +595,101 @@
                             }
                         }
                         
-                        drawnPixels.push({ x, y, r, g, b });
+                        // Separate red and blue pixels
+                        if (r > b) {
+                            redPixels.push({ x, y, r, g, b });
+                        } else {
+                            bluePixels.push({ x, y, r, g, b });
+                        }
                     }
                 }
                 
-                if (drawnPixels.length === 0) return null;
+                // Process each color separately
+                const results = [];
                 
-                let sumR = 0, sumB = 0;
-                const pixelCount = drawnPixels.length;
-                for (let i = 0; i < pixelCount; i++) {
-                    sumR += drawnPixels[i].r;
-                    sumB += drawnPixels[i].b;
+                if (redPixels.length > 0) {
+                    const centroid = calculateGeometricCentroid(redPixels);
+                    const unitPoints = redPixels.map(p => canvasToUnit(p.x, p.y));
+                    const estimatedBrushSize = 5;
+                    const area = calculatePixelBasedArea(unitPoints, estimatedBrushSize);
+                    
+                    const numBins = 180;
+                    const bins = Array(numBins).fill(null).map(() => ({ maxRadius: 0, point: null }));
+                    
+                    unitPoints.forEach(point => {
+                        const dx = point.x - centroid.x;
+                        const dy = point.y - centroid.y;
+                        const angle = Math.atan2(dy, dx);
+                        const radius = Math.sqrt(dx * dx + dy * dy);
+                        
+                        let binIndex = Math.floor(((angle + Math.PI) / (2 * Math.PI)) * numBins);
+                        binIndex = (binIndex + numBins) % numBins;
+                        
+                        if (radius > bins[binIndex].maxRadius) {
+                            bins[binIndex].maxRadius = radius;
+                            bins[binIndex].point = point;
+                        }
+                    });
+                    
+                    const contour = bins
+                        .filter(bin => bin.point !== null)
+                        .map(bin => bin.point);
+                    
+                    const radii = bins.filter(bin => bin.maxRadius > 0).map(bin => bin.maxRadius);
+                    const avgRadius = radii.reduce((sum, r) => sum + r, 0) / radii.length;
+                    
+                    results.push({
+                        phase: 'red',
+                        centroid,
+                        contour,
+                        avgRadius,
+                        area,
+                        allPoints: unitPoints
+                    });
                 }
-                const phase = sumR > sumB ? 'red' : 'blue';
                 
-                const centroid = calculateGeometricCentroid(drawnPixels);
-                const unitPoints = drawnPixels.map(p => canvasToUnit(p.x, p.y));
-                const estimatedBrushSize = 5;
-                const area = calculatePixelBasedArea(unitPoints, estimatedBrushSize);
-                
-                const numBins = 180;
-                const bins = Array(numBins).fill(null).map(() => ({ maxRadius: 0, point: null }));
-                
-                unitPoints.forEach(point => {
-                    const dx = point.x - centroid.x;
-                    const dy = point.y - centroid.y;
-                    const angle = Math.atan2(dy, dx);
-                    const radius = Math.sqrt(dx * dx + dy * dy);
+                if (bluePixels.length > 0) {
+                    const centroid = calculateGeometricCentroid(bluePixels);
+                    const unitPoints = bluePixels.map(p => canvasToUnit(p.x, p.y));
+                    const estimatedBrushSize = 5;
+                    const area = calculatePixelBasedArea(unitPoints, estimatedBrushSize);
                     
-                    let binIndex = Math.floor(((angle + Math.PI) / (2 * Math.PI)) * numBins);
-                    binIndex = (binIndex + numBins) % numBins;
+                    const numBins = 180;
+                    const bins = Array(numBins).fill(null).map(() => ({ maxRadius: 0, point: null }));
                     
-                    if (radius > bins[binIndex].maxRadius) {
-                        bins[binIndex].maxRadius = radius;
-                        bins[binIndex].point = point;
-                    }
-                });
+                    unitPoints.forEach(point => {
+                        const dx = point.x - centroid.x;
+                        const dy = point.y - centroid.y;
+                        const angle = Math.atan2(dy, dx);
+                        const radius = Math.sqrt(dx * dx + dy * dy);
+                        
+                        let binIndex = Math.floor(((angle + Math.PI) / (2 * Math.PI)) * numBins);
+                        binIndex = (binIndex + numBins) % numBins;
+                        
+                        if (radius > bins[binIndex].maxRadius) {
+                            bins[binIndex].maxRadius = radius;
+                            bins[binIndex].point = point;
+                        }
+                    });
+                    
+                    const contour = bins
+                        .filter(bin => bin.point !== null)
+                        .map(bin => bin.point);
+                    
+                    const radii = bins.filter(bin => bin.maxRadius > 0).map(bin => bin.maxRadius);
+                    const avgRadius = radii.reduce((sum, r) => sum + r, 0) / radii.length;
+                    
+                    results.push({
+                        phase: 'blue',
+                        centroid,
+                        contour,
+                        avgRadius,
+                        area,
+                        allPoints: unitPoints
+                    });
+                }
                 
-                const contour = bins
-                    .filter(bin => bin.point !== null)
-                    .map(bin => bin.point);
-                
-                const radii = bins.filter(bin => bin.maxRadius > 0).map(bin => bin.maxRadius);
-                const avgRadius = radii.reduce((sum, r) => sum + r, 0) / radii.length;
-                
-                return {
-                    phase,
-                    centroid,
-                    contour,
-                    avgRadius,
-                    area,
-                    allPoints: unitPoints
-                };
+                return results.length > 0 ? results : null;
             }
             
             // Worker message handler
@@ -670,23 +714,23 @@
                     
                     const frequency = parseFloat(freqMatch[1]);
                     
-                    // Process image
-                    const contours = extractContours(imageData);
+                    // Process image - now returns array of shapes (red and blue)
+                    const shapes = extractContours(imageData);
                     
-                    if (!contours) {
+                    if (!shapes) {
                         self.postMessage({ error: 'No contours found', filename });
                         return;
                     }
                     
-                    // Send result back
+                    // Send result back - now includes multiple shapes
                     self.postMessage({
                         success: true,
-                        result: {
+                        results: shapes.map(shape => ({
                             participant,
                             frequency,
                             filename,
-                            ...contours
-                        }
+                            ...shape
+                        }))
                     });
                 } catch (err) {
                     self.postMessage({ error: err.message, filename });
@@ -1007,7 +1051,8 @@
                             if (e.data.error) {
                                 reject(new Error(e.data.error));
                             } else {
-                                resolve(e.data.result);
+                                // Now returns array of shapes (red and blue)
+                                resolve(e.data.results);
                             }
                         };
                         
@@ -1085,7 +1130,16 @@
                     throw new Error('Processing cancelled by user');
                 }
                 
-                results.push(...batchResults.filter(r => r !== null));
+                // Flatten results since each image returns array of shapes (red + blue)
+                batchResults.forEach(result => {
+                    if (result !== null) {
+                        if (Array.isArray(result)) {
+                            results.push(...result);
+                        } else {
+                            results.push(result);
+                        }
+                    }
+                });
                 
                 // Update statistics
                 processingStats.processedImages = Math.min(i + batch.length, files.length);
@@ -1410,17 +1464,21 @@
             drawReferenceCircle(ctx, size);
             
             if (redAvg) {
+                // Draw individual shapes using their OWN centroids
                 redAvg.individualData.forEach(d => {
-                    drawIndividualShape(ctx, d.contour, redAvg.centroid, '#ef4444', 2, size);
+                    drawIndividualShape(ctx, d.contour, d.centroid, '#ef4444', 2, size);
                 });
+                // Draw average shape with averaged centroid
                 drawAverageShape(ctx, redAvg.contour, redAvg.centroid, '#dc2626', 4, size);
                 drawCentroid(ctx, redAvg.centroid, '#dc2626', size);
             }
             
             if (blueAvg) {
+                // Draw individual shapes using their OWN centroids
                 blueAvg.individualData.forEach(d => {
-                    drawIndividualShape(ctx, d.contour, blueAvg.centroid, '#3b82f6', 2, size);
+                    drawIndividualShape(ctx, d.contour, d.centroid, '#3b82f6', 2, size);
                 });
+                // Draw average shape with averaged centroid
                 drawAverageShape(ctx, blueAvg.contour, blueAvg.centroid, '#2563eb', 4, size);
                 drawCentroid(ctx, blueAvg.centroid, '#2563eb', size);
             }
