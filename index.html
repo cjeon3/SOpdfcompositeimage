@@ -823,8 +823,8 @@
                     const radii = bins.filter(bin => bin.maxRadius > 0).map(bin => bin.maxRadius);
                     const avgRadius = radii.length > 0 ? radii.reduce((sum, r) => sum + r, 0) / radii.length : 0;
                     
-                    // Fill gaps in contour for incomplete shapes
-                    fillContourGaps(bins, avgRadius);
+                    // NOTE: Gap filling temporarily disabled - was causing worker crashes
+                    // fillContourGaps(bins, avgRadius);
                     
                     const contour = bins
                         .filter(bin => bin.point !== null)
@@ -869,8 +869,8 @@
                     const radii = bins.filter(bin => bin.maxRadius > 0).map(bin => bin.maxRadius);
                     const avgRadius = radii.length > 0 ? radii.reduce((sum, r) => sum + r, 0) / radii.length : 0;
                     
-                    // Fill gaps in contour for incomplete shapes
-                    fillContourGaps(bins, avgRadius);
+                    // NOTE: Gap filling temporarily disabled - was causing worker crashes
+                    // fillContourGaps(bins, avgRadius);
                     
                     const contour = bins
                         .filter(bin => bin.point !== null)
