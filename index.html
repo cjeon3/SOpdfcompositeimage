@@ -1239,44 +1239,63 @@
         // ============================================
         
         const workerCode = `
-self.onmessage = async function(e) {
+self.onmessage = function(e) {
     try {
-        const { imageData, filename } = e.data;
+        const data = e.data;
         
-        if (!imageData || !imageData.data) {
-            throw new Error('Invalid image data');
+        // Validate input
+        if (!data) {
+            self.postMessage({
+                success: false,
+                filename: 'unknown',
+                error: 'No data received'
+            });
+            return;
+        }
+        
+        const { imageData, filename } = data;
+        
+        if (!imageData || !imageData.data || !imageData.width || !imageData.height) {
+            self.postMessage({
+                success: false,
+                filename: filename || 'unknown',
+                error: 'Invalid image data structure'
+            });
+            return;
         }
         
         const width = imageData.width;
         const height = imageData.height;
-        const data = imageData.data;
+        const pixelData = imageData.data;
         
-        // Detect colors
+        // Detect colors - simplified logic
         const redPixels = [];
         const bluePixels = [];
         
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
                 const idx = (y * width + x) * 4;
-                const r = data[idx];
-                const g = data[idx + 1];
-                const b = data[idx + 2];
-                const a = data[idx + 3];
+                const r = pixelData[idx];
+                const g = pixelData[idx + 1];
+                const b = pixelData[idx + 2];
+                const a = pixelData[idx + 3];
                 
+                // Skip transparent pixels
                 if (a < 128) continue;
                 
-                // Red detection (allow some tolerance)
+                // Red detection (strict thresholds)
                 if (r > 240 && g < 20 && b < 20) {
-                    redPixels.push({ x, y, r, g, b });
+                    redPixels.push({ x: x, y: y });
                 }
                 
-                // Blue detection (allow some tolerance)
+                // Blue detection (strict thresholds)
                 if (b > 240 && r < 20 && g < 20) {
-                    bluePixels.push({ x, y, r, g, b });
+                    bluePixels.push({ x: x, y: y });
                 }
             }
         }
         
+        // Send success response
         self.postMessage({
             success: true,
             filename: filename,
@@ -1287,10 +1306,11 @@ self.onmessage = async function(e) {
         });
         
     } catch (error) {
+        // Send error response
         self.postMessage({
             success: false,
-            filename: e.data?.filename || 'unknown',
-            error: error.message
+            filename: e.data && e.data.filename ? e.data.filename : 'unknown',
+            error: error.message || 'Unknown worker error'
         });
     }
 };
@@ -1304,27 +1324,28 @@ self.onmessage = async function(e) {
         // ============================================
         
         async function loadImagesFromZip(file) {
-            console.log(`[ZIP] Extracting from: ${file.name}`);
-            
-            // Extract ordering number from ZIP name (e.g., "Michael D_07_Drawings.zip" → 7)
-            const zipOrderMatch = file.name.match(/_(\d+)_/);
-            const zipOrderNumber = zipOrderMatch ? parseInt(zipOrderMatch[1]) : null;
-            
-            // Extract participant name from ZIP name (before first underscore+number pattern)
-            const nameWithoutExt = file.name.replace(/\.zip$/i, '');
-            const zipParticipantMatch = nameWithoutExt.match(/^(.+?)_\d+/);
-            const zipParticipant = zipParticipantMatch ? zipParticipantMatch[1].trim() : null;
-            
-            if (zipOrderNumber !== null && zipParticipant !== null) {
-                console.log(`[ZIP]   ✓ Participant="${zipParticipant}", Order=${zipOrderNumber}`);
-            } else {
-                console.warn(`[ZIP]   ⚠ Could not extract order/participant from: ${file.name}`);
-            }
-            
-            const zip = await JSZip.loadAsync(file);
-            const images = [];
-            let pngCount = 0;
-            let nestedZipCount = 0;
+            try {
+                console.log(`[ZIP] Extracting from: ${file.name}`);
+                
+                // Extract ordering number from ZIP name (e.g., "Michael D_07_Drawings.zip" → 7)
+                const zipOrderMatch = file.name.match(/_(\d+)_/);
+                const zipOrderNumber = zipOrderMatch ? parseInt(zipOrderMatch[1]) : null;
+                
+                // Extract participant name from ZIP name (before first underscore+number pattern)
+                const nameWithoutExt = file.name.replace(/\.zip$/i, '');
+                const zipParticipantMatch = nameWithoutExt.match(/^(.+?)_\d+/);
+                const zipParticipant = zipParticipantMatch ? zipParticipantMatch[1].trim() : null;
+                
+                if (zipOrderNumber !== null && zipParticipant !== null) {
+                    console.log(`[ZIP]   ✓ Participant="${zipParticipant}", Order=${zipOrderNumber}`);
+                } else {
+                    console.warn(`[ZIP]   ⚠ Could not extract order/participant from: ${file.name}`);
+                }
+                
+                const zip = await JSZip.loadAsync(file);
+                const images = [];
+                let pngCount = 0;
+                let nestedZipCount = 0;
             
             for (const [path, zipEntry] of Object.entries(zip.files)) {
                 if (zipEntry.dir) continue;
@@ -1334,10 +1355,15 @@ self.onmessage = async function(e) {
                         nestedZipCount++;
                         const nestedZipBlob = await zipEntry.async('blob');
                         const nestedZipFile = new File([nestedZipBlob], path.split('/').pop());
+                        
+                        console.log(`[ZIP]   → Processing nested ZIP: ${path.split('/').pop()}`);
                         const nestedImages = await loadImagesFromZip(nestedZipFile);
+                        console.log(`[ZIP]   → Got ${nestedImages.length} images from nested ZIP`);
+                        
                         images.push(...nestedImages);
+                        console.log(`[ZIP]   → Total images so far: ${images.length}`);
                     } catch (err) {
-                        console.error(`[ZIP] Error processing nested ZIP ${path}:`, err);
+                        console.error(`[ZIP] ✖ Error processing nested ZIP ${path}:`, err);
                     }
                     continue;
                 }
@@ -1358,23 +1384,36 @@ self.onmessage = async function(e) {
                             zipParticipant: zipParticipant
                         });
                     } catch (err) {
-                        console.error(`[ZIP] Error extracting ${path}:`, err);
+                        console.error(`[ZIP] ✖ Error extracting PNG ${path}:`, err);
                     }
                 }
             }
             
             // Log summary for this ZIP
+            console.log(`[ZIP] === Summary for ${file.name} ===`);
             if (pngCount > 0) {
-                console.log(`[ZIP]   → Found ${pngCount} PNG file(s) in ${file.name}`);
+                console.log(`[ZIP]   → Direct PNGs: ${pngCount}`);
             }
             if (nestedZipCount > 0) {
-                console.log(`[ZIP]   → Found ${nestedZipCount} nested ZIP(s) in ${file.name}`);
+                console.log(`[ZIP]   → Nested ZIPs processed: ${nestedZipCount}`);
             }
+            console.log(`[ZIP]   → Returning ${images.length} total images from this ZIP`);
+            console.log(`[ZIP] =====================================`);
+            
             if (pngCount === 0 && nestedZipCount === 0) {
                 console.warn(`[ZIP]   ⚠ No PNG or ZIP files found in ${file.name}`);
             }
             
             return images;
+            
+            } catch (zipError) {
+                console.error(`[ZIP] ✖✖✖ FATAL ERROR in ${file.name}:`, zipError);
+                console.error(`[ZIP] Error type:`, zipError.name);
+                console.error(`[ZIP] Error message:`, zipError.message);
+                console.error(`[ZIP] Stack:`, zipError.stack);
+                // Return empty array to allow processing to continue
+                return [];
+            }
         }
         
         async function loadImageToCanvas(file) {
@@ -1757,23 +1796,36 @@ self.onmessage = async function(e) {
                 for (const file of inputFiles) {
                     if (processingCancelled) throw new Error('Processing cancelled');
                     
-                    if (file.name.toLowerCase().endsWith('.zip')) {
-                        const images = await loadImagesFromZip(file);
-                        allImages.push(...images);
-                    } else if (file.name.toLowerCase().endsWith('.png')) {
-                        allImages.push({
-                            name: file.name,
-                            blob: file,
-                            fullPath: file.name,
-                            sourceZip: null,
-                            zipOrderNumber: null,
-                            zipParticipant: null
-                        });
+                    try {
+                        if (file.name.toLowerCase().endsWith('.zip')) {
+                            console.log(`[Main] Processing ZIP: ${file.name}`);
+                            const images = await loadImagesFromZip(file);
+                            console.log(`[Main] Got ${images.length} images from ${file.name}`);
+                            allImages.push(...images);
+                            console.log(`[Main] Total images so far: ${allImages.length}`);
+                        } else if (file.name.toLowerCase().endsWith('.png')) {
+                            allImages.push({
+                                name: file.name,
+                                blob: file,
+                                fullPath: file.name,
+                                sourceZip: null,
+                                zipOrderNumber: null,
+                                zipParticipant: null
+                            });
+                        }
+                    } catch (extractError) {
+                        console.error(`[Main] Error processing ${file.name}:`, extractError);
+                        throw extractError;
                     }
                 }
                 
+                console.log(`[Main] ========================================`);
+                console.log(`[Main] Extraction complete!`);
+                console.log(`[Main] Total images in allImages array: ${allImages.length}`);
+                console.log(`[Main] ========================================`);
+                
                 if (allImages.length === 0) {
-                    throw new Error('No valid PNG images found');
+                    throw new Error('No valid PNG images found in any ZIP files');
                 }
                 
                 console.log(`[Main] ✓ Total PNGs extracted: ${allImages.length}`);
@@ -1981,6 +2033,12 @@ self.onmessage = async function(e) {
                 }, 3000);
                 
             } catch (err) {
+                console.error('!!! ANALYSIS ERROR !!!');
+                console.error('Error type:', err.name);
+                console.error('Error message:', err.message);
+                console.error('Error stack:', err.stack);
+                console.error('!!!!!!!!!!!!!!!!!!!!!');
+                
                 if (err.message === 'Processing cancelled') {
                     updateProgress(0, '❌ Processing cancelled');
                 } else {
