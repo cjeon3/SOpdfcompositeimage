@@ -29,6 +29,7 @@
             gap: 1.5rem;
         }
         
+        /* Mobile optimizations - Full screen width */
         @media (max-width: 768px) {
             body {
                 zoom: 1;
@@ -40,6 +41,62 @@
             .analysis-grid {
                 grid-template-columns: 1fr;
                 gap: 1rem;
+            }
+            
+            .max-w-7xl {
+                max-width: 100%;
+                width: 100%;
+                padding: 0;
+                margin: 0;
+            }
+            
+            /* Make all containers full width on mobile */
+            .bg-white, .bg-gradient-to-r {
+                width: 100%;
+                box-sizing: border-box;
+            }
+            
+            /* Larger touch targets */
+            button {
+                min-height: 44px;
+                touch-action: manipulation;
+            }
+            
+            /* File input touch-friendly */
+            input[type="file"] {
+                font-size: 16px; /* Prevents zoom on iOS */
+            }
+        }
+        
+        /* Tablet optimizations - Full screen width */
+        @media (min-width: 769px) and (max-width: 1024px) {
+            body {
+                zoom: 0.9;
+                -moz-transform: scale(0.9);
+                -moz-transform-origin: 0 0;
+                width: 100vw;
+                padding: 1rem;
+            }
+            
+            .analysis-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .max-w-7xl {
+                max-width: 100%;
+                width: 100%;
+            }
+            
+            button {
+                min-height: 40px;
+            }
+        }
+        
+        /* Large desktop */
+        @media (min-width: 1920px) {
+            body {
+                zoom: 0.8;
+                -moz-transform: scale(0.8);
             }
         }
         
@@ -60,6 +117,7 @@
             transition: width 0.2s ease-out;
         }
         
+        /* Prevent horizontal scroll */
         * {
             box-sizing: border-box;
         }
@@ -107,13 +165,39 @@
         
         <!-- Instructions -->
         <div class="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 sm:p-6 rounded-xl shadow-lg mb-6 border border-blue-200">
-            <h2 class="text-lg sm:text-xl font-bold text-blue-800 mb-4">How to Use</h2>
+            <h2 class="text-lg sm:text-xl font-bold text-blue-800 mb-4 flex items-center gap-2">
+                <svg class="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                How to Use
+            </h2>
             <ol class="list-decimal list-inside space-y-2 text-sm sm:text-base text-gray-700">
-                <li><strong>Upload Files:</strong> Select PNG files OR ZIP files from the Sound Object tool</li>
-                <li><strong>Automatic Detection:</strong> Frequency, phase (Red/Blue), and participant ID from filenames</li>
-                <li><strong>Process Data:</strong> Click "Analyze & Generate Visualizations"</li>
-                <li><strong>View & Export:</strong> Download publication-ready figures</li>
+                <li><strong>Upload Files:</strong> Select PNG files OR ZIP files (even nested ZIPs!) from the Sound Object tool</li>
+                <li><strong>Automatic Extraction:</strong> ZIP files are automatically unpacked to find all PNG images inside</li>
+                <li><strong>Automatic Detection:</strong>
+                    <ul class="list-disc list-inside ml-6 mt-1 space-y-1">
+                        <li><strong>Participant ID & Frequency:</strong> Extracted from filename (e.g., "P-001_125Hz_90dB.png")</li>
+                        <li><strong>Phase (Red/Blue):</strong> Detected by analyzing pixel colors in the image (red pixels = in-phase, blue pixels = out-of-phase)</li>
+                    </ul>
+                </li>
+                <li><strong>Process Data:</strong> Click "Analyze & Generate Visualizations" - now with parallel processing!</li>
+                <li><strong>View & Export:</strong> See averaged shapes with statistics, download publication-ready figures</li>
             </ol>
+            <p class="mt-4 text-xs sm:text-sm text-blue-700 font-semibold">
+                📝 Expected filename format: <code class="bg-white px-2 py-1 rounded">ParticipantID_FrequencyHz_dBdB.png</code> (e.g., P-001_125Hz_90dB.png)
+            </p>
+            <p class="mt-2 text-xs sm:text-sm text-amber-700 font-semibold bg-amber-50 p-3 rounded-lg border border-amber-200">
+                🎨 <strong>Phase Detection:</strong> Red and blue phases are automatically separated by analyzing pixel colors in each image. Each image can contain both red (in-phase) and blue (out-of-phase) drawings, which are processed independently.
+            </p>
+            <p class="mt-2 text-xs sm:text-sm text-green-700 font-semibold bg-green-50 p-3 rounded-lg border border-green-200">
+                📦 <strong>ZIP Support:</strong> Upload one big ZIP file containing multiple participant folders (each as their own ZIP). The tool will automatically extract all nested ZIPs and find every PNG file!
+            </p>
+            <p class="mt-2 text-xs text-purple-700 font-semibold bg-purple-50 p-2 rounded">
+                ⚡ <strong>Ultra-Optimized Performance:</strong> This version uses Web Workers for parallel processing (3 images per CPU core), advanced memory management to minimize garbage collection, and real-time performance monitoring!
+            </p>
+            <p class="mt-2 text-xs text-green-700 font-semibold bg-green-50 p-2 rounded">
+                ✅ <strong>Perfect Consistency:</strong> This analyzer uses the EXACT coordinate system (1000×1000px canvas, ±10 unit grid), centroid calculation (uniform resampling), and area calculation (pixel-based with brush radius) as the original drawing tool.
+            </p>
         </div>
         
         <!-- File Upload Section -->
@@ -122,7 +206,7 @@
             
             <div class="mb-4">
                 <label class="block text-xs sm:text-sm font-semibold text-gray-700 mb-2">
-                    Select PNG files OR ZIP files containing PNGs
+                    Select PNG files OR ZIP files containing PNGs (multiple files/folders allowed)
                 </label>
                 <input 
                     type="file" 
