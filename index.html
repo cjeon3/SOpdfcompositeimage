@@ -186,21 +186,29 @@
             <ol class="list-decimal list-inside space-y-2 text-sm sm:text-base text-gray-700">
                 <li><strong>Upload Files:</strong> Select PNG files OR ZIP files (even nested ZIPs!) from the Sound Object tool</li>
                 <li><strong>Automatic Extraction:</strong> ZIP files are automatically unpacked to find all PNG images inside</li>
-                <li><strong>Automatic Detection:</strong> Frequency, phase (Red/Blue), and participant are detected from filenames</li>
+                <li><strong>Automatic Detection:</strong>
+                    <ul class="list-disc list-inside ml-6 mt-1 space-y-1">
+                        <li><strong>Participant ID & Frequency:</strong> Extracted from filename (e.g., "P-001_125Hz_90dB.png")</li>
+                        <li><strong>Phase (Red/Blue):</strong> Detected by analyzing pixel colors in the image (red pixels = in-phase, blue pixels = out-of-phase)</li>
+                    </ul>
+                </li>
                 <li><strong>Process Data:</strong> Click "Analyze & Generate Visualizations" - now with parallel processing!</li>
                 <li><strong>View & Export:</strong> See averaged shapes with statistics, download publication-ready figures</li>
             </ol>
             <p class="mt-4 text-xs sm:text-sm text-blue-700 font-semibold">
-                📝 Expected filename format: ParticipantID_FrequencyHz_dBdB.png (e.g., P-001_125Hz_90dB.png)
+                📝 Expected filename format: <code class="bg-white px-2 py-1 rounded">ParticipantID_FrequencyHz_dBdB.png</code> (e.g., P-001_125Hz_90dB.png)
+            </p>
+            <p class="mt-2 text-xs sm:text-sm text-amber-700 font-semibold bg-amber-50 p-3 rounded-lg border border-amber-200">
+                🎨 <strong>Phase Detection:</strong> Red and blue phases are automatically separated by analyzing pixel colors in each image. Each image can contain both red (in-phase) and blue (out-of-phase) drawings, which are processed independently.
             </p>
             <p class="mt-2 text-xs sm:text-sm text-green-700 font-semibold bg-green-50 p-3 rounded-lg border border-green-200">
                 📦 <strong>ZIP Support:</strong> Upload one big ZIP file containing multiple participant folders (each as their own ZIP). The tool will automatically extract all nested ZIPs and find every PNG file!
             </p>
             <p class="mt-2 text-xs text-purple-700 font-semibold bg-purple-50 p-2 rounded">
-                ⚡ <strong>NEW: Ultra-Optimized Performance:</strong> This version uses Web Workers for parallel processing (3 images per CPU core), advanced memory management to minimize garbage collection, and real-time performance monitoring!
+                ⚡ <strong>Ultra-Optimized Performance:</strong> This version uses Web Workers for parallel processing (3 images per CPU core), advanced memory management to minimize garbage collection, and real-time performance monitoring!
             </p>
             <p class="mt-2 text-xs text-green-700 font-semibold bg-green-50 p-2 rounded">
-                ✅ Perfect Consistency: This analyzer uses the EXACT coordinate system (1000×1000px canvas, ±10 unit grid), centroid calculation (uniform resampling), and area calculation (pixel-based with brush radius) as the original drawing tool.
+                ✅ <strong>Perfect Consistency:</strong> This analyzer uses the EXACT coordinate system (1000×1000px canvas, ±10 unit grid), centroid calculation (uniform resampling), and area calculation (pixel-based with brush radius) as the original drawing tool.
             </p>
         </div>
         
@@ -508,6 +516,78 @@
                 return Math.sqrt(dx * dx + dy * dy);
             }
             
+            function fillContourGaps(bins, avgRadius) {
+                // Fill gaps in angular bins by interpolating from neighboring bins
+                // This helps with incomplete shapes due to red/blue overlap
+                const maxGapSize = 20; // Maximum gap size to fill (in bins)
+                
+                for (let i = 0; i < bins.length; i++) {
+                    if (bins[i].maxRadius > 0) continue; // Already has data
+                    
+                    // Find previous and next non-empty bins
+                    let prevIdx = -1, nextIdx = -1;
+                    let gapSize = 0;
+                    
+                    // Search backward
+                    for (let j = 1; j <= maxGapSize; j++) {
+                        const idx = (i - j + bins.length) % bins.length;
+                        if (bins[idx].maxRadius > 0) {
+                            prevIdx = idx;
+                            break;
+                        }
+                    }
+                    
+                    // Search forward
+                    for (let j = 1; j <= maxGapSize; j++) {
+                        const idx = (i + j) % bins.length;
+                        if (bins[idx].maxRadius > 0) {
+                            nextIdx = idx;
+                            gapSize = j;
+                            break;
+                        }
+                    }
+                    
+                    // If we found both neighbors, interpolate
+                    if (prevIdx !== -1 && nextIdx !== -1 && gapSize <= maxGapSize) {
+                        const prevRadius = bins[prevIdx].maxRadius;
+                        const nextRadius = bins[nextIdx].maxRadius;
+                        
+                        // Use smooth interpolation (cubic for natural curves)
+                        const totalGap = gapSize + 1;
+                        let distFromPrev = 1;
+                        for (let k = prevIdx + 1; k !== nextIdx; k = (k + 1) % bins.length) {
+                            if (bins[k].maxRadius === 0) {
+                                const t = distFromPrev / totalGap;
+                                // Cubic interpolation for smoother curves
+                                const smoothT = t * t * (3 - 2 * t);
+                                const interpRadius = prevRadius + (nextRadius - prevRadius) * smoothT;
+                                
+                                const angle = (k / bins.length) * 2 * Math.PI - Math.PI;
+                                bins[k].maxRadius = interpRadius;
+                                bins[k].point = {
+                                    x: interpRadius * Math.cos(angle),
+                                    y: interpRadius * Math.sin(angle)
+                                };
+                            }
+                            distFromPrev++;
+                        }
+                    } else if (prevIdx !== -1 || nextIdx !== -1) {
+                        // If only one neighbor, use average radius
+                        const refRadius = prevIdx !== -1 ? bins[prevIdx].maxRadius : bins[nextIdx].maxRadius;
+                        const interpRadius = avgRadius > 0 ? avgRadius : refRadius;
+                        
+                        const angle = (i / bins.length) * 2 * Math.PI - Math.PI;
+                        bins[i].maxRadius = interpRadius;
+                        bins[i].point = {
+                            x: interpRadius * Math.cos(angle),
+                            y: interpRadius * Math.sin(angle)
+                        };
+                    }
+                }
+                
+                return bins;
+            }
+            
             function isPointInPolygon(x, y, polygon) {
                 let inside = false;
                 for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
@@ -655,6 +735,10 @@
                 const grayColorDiff = 20;
                 const alphaThreshold = 128;
                 
+                // Enhanced color separation thresholds
+                const RED_THRESHOLD = 30;  // r must be at least 30 more than b
+                const BLUE_THRESHOLD = 30; // b must be at least 30 more than r
+                
                 for (let y = minY; y < maxY; y++) {
                     for (let x = minX; x < maxX; x++) {
                         const idx = (y * width + x) * 4;
@@ -674,12 +758,32 @@
                             }
                         }
                         
-                        // Separate red and blue pixels
-                        if (r > b) {
+                        // Enhanced red/blue separation with stronger thresholds
+                        const rbDiff = r - b;
+                        
+                        if (rbDiff > RED_THRESHOLD) {
+                            // Clearly red pixel
                             redPixels.push({ x, y, r, g, b });
-                        } else {
+                        } else if (rbDiff < -BLUE_THRESHOLD) {
+                            // Clearly blue pixel
                             bluePixels.push({ x, y, r, g, b });
+                        } else {
+                            // Ambiguous - use secondary criteria
+                            // Check saturation and hue to make better decision
+                            const maxChannel = Math.max(r, g, b);
+                            const minChannel = Math.min(r, g, b);
+                            const saturation = maxChannel > 0 ? (maxChannel - minChannel) / maxChannel : 0;
+                            
+                            if (saturation > 0.3) {
+                                // High saturation - use stronger color indicator
+                                if (r > b && r > g * 0.8) {
+                                    redPixels.push({ x, y, r, g, b });
+                                } else if (b > r && b > g * 0.8) {
+                                    bluePixels.push({ x, y, r, g, b });
+                                }
+                            }
                         }
+                    }
                     }
                 }
                 
@@ -711,12 +815,16 @@
                         }
                     });
                     
+                    // Calculate initial average radius for gap filling
+                    const radii = bins.filter(bin => bin.maxRadius > 0).map(bin => bin.maxRadius);
+                    const avgRadius = radii.length > 0 ? radii.reduce((sum, r) => sum + r, 0) / radii.length : 0;
+                    
+                    // Fill gaps in contour for incomplete shapes
+                    fillContourGaps(bins, avgRadius);
+                    
                     const contour = bins
                         .filter(bin => bin.point !== null)
                         .map(bin => bin.point);
-                    
-                    const radii = bins.filter(bin => bin.maxRadius > 0).map(bin => bin.maxRadius);
-                    const avgRadius = radii.reduce((sum, r) => sum + r, 0) / radii.length;
                     
                     results.push({
                         phase: 'red',
@@ -753,12 +861,16 @@
                         }
                     });
                     
+                    // Calculate initial average radius for gap filling
+                    const radii = bins.filter(bin => bin.maxRadius > 0).map(bin => bin.maxRadius);
+                    const avgRadius = radii.length > 0 ? radii.reduce((sum, r) => sum + r, 0) / radii.length : 0;
+                    
+                    // Fill gaps in contour for incomplete shapes
+                    fillContourGaps(bins, avgRadius);
+                    
                     const contour = bins
                         .filter(bin => bin.point !== null)
                         .map(bin => bin.point);
-                    
-                    const radii = bins.filter(bin => bin.maxRadius > 0).map(bin => bin.maxRadius);
-                    const avgRadius = radii.reduce((sum, r) => sum + r, 0) / radii.length;
                     
                     results.push({
                         phase: 'blue',
