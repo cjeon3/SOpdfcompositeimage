@@ -1325,7 +1325,8 @@
                         
                         return result;
                     } catch (err) {
-                        console.warn(`Skipping ${file.name}:`, err.message);
+                        const errorMsg = err && err.message ? err.message : (err ? String(err) : 'Unknown error');
+                        console.warn(`Skipping ${file.name}:`, errorMsg, err);
                         updateBatchItem(batchIndex, 'error', 0);
                         return null;
                     }
@@ -1820,6 +1821,9 @@
                 
                 updateProgress(50, 'Computing averages...');
                 
+                console.log('Starting averaging process...');
+                console.log('Participant data:', participantData);
+                
                 const results = {};
                 FREQUENCIES.forEach(freq => {
                     if (processingCancelled) {
@@ -1829,10 +1833,18 @@
                     const redData = participantData[freq].red;
                     const blueData = participantData[freq].blue;
                     
-                    results[freq] = {
-                        red: redData.length > 0 ? averageContours(redData) : null,
-                        blue: blueData.length > 0 ? averageContours(blueData) : null
-                    };
+                    console.log(`Processing ${freq} Hz: ${redData.length} red, ${blueData.length} blue`);
+                    
+                    try {
+                        results[freq] = {
+                            red: redData.length > 0 ? averageContours(redData) : null,
+                            blue: blueData.length > 0 ? averageContours(blueData) : null
+                        };
+                        console.log(`Completed ${freq} Hz averaging`);
+                    } catch (err) {
+                        console.error(`Error averaging ${freq} Hz:`, err);
+                        throw err;
+                    }
                 });
                 
                 if (processingCancelled) {
@@ -1840,6 +1852,8 @@
                 }
                 
                 updateProgress(70, 'Generating visualizations...');
+                
+                console.log('Starting visualization generation...');
                 
                 const vizContainer = document.getElementById('visualization-grid');
                 vizContainer.innerHTML = '';
@@ -1853,30 +1867,44 @@
                     const redAvg = results[freq].red;
                     const blueAvg = results[freq].blue;
                     
-                    if (!redAvg && !blueAvg) return;
+                    console.log(`Visualizing ${freq} Hz:`, { redAvg, blueAvg });
                     
-                    const canvas = drawVisualization(freq, redAvg, blueAvg);
+                    if (!redAvg && !blueAvg) {
+                        console.log(`Skipping ${freq} Hz - no data`);
+                        return;
+                    }
                     
-                    const wrapper = document.createElement('div');
-                    wrapper.className = 'canvas-container p-4';
-                    
-                    const canvasWrapper = document.createElement('div');
-                    canvasWrapper.className = 'mb-3';
-                    canvasWrapper.appendChild(canvas);
-                    wrapper.appendChild(canvasWrapper);
-                    
-                    const downloadBtn = document.createElement('button');
-                    downloadBtn.className = 'w-full px-4 py-2 rounded-lg font-semibold text-sm bg-gradient-to-r from-purple-500 to-pink-600 text-white hover:from-purple-600 hover:to-pink-700 transition-all';
-                    downloadBtn.textContent = '⬇️ Download Figure';
-                    downloadBtn.onclick = () => {
-                        const link = document.createElement('a');
-                        link.download = `average_shape_${freq}Hz.png`;
-                        link.href = canvas.toDataURL();
-                        link.click();
-                    };
-                    wrapper.appendChild(downloadBtn);
-                    
-                    vizContainer.appendChild(wrapper);
+                    try {
+                        const canvas = drawVisualization(freq, redAvg, blueAvg);
+                        console.log(`Created canvas for ${freq} Hz`);
+                        
+                        const wrapper = document.createElement('div');
+                        wrapper.className = 'canvas-container p-4';
+                        
+                        const canvasWrapper = document.createElement('div');
+                        canvasWrapper.className = 'mb-3';
+                        canvasWrapper.appendChild(canvas);
+                        wrapper.appendChild(canvasWrapper);
+                        
+                        const downloadBtn = document.createElement('button');
+                        downloadBtn.className = 'w-full px-4 py-2 rounded-lg font-semibold text-sm bg-gradient-to-r from-purple-500 to-pink-600 text-white hover:from-purple-600 hover:to-pink-700 transition-all';
+                        downloadBtn.textContent = '⬇️ Download Figure';
+                        downloadBtn.onclick = () => {
+                            const link = document.createElement('a');
+                            link.download = `average_shape_${freq}Hz.png`;
+                            link.href = canvas.toDataURL();
+                            link.click();
+                        };
+                        wrapper.appendChild(downloadBtn);
+                        
+                        vizContainer.appendChild(wrapper);
+                        
+                        vizCount++;
+                        console.log(`Added visualization ${vizCount} for ${freq} Hz`);
+                    } catch (err) {
+                        console.error(`Error creating visualization for ${freq} Hz:`, err);
+                        throw err;
+                    }
                     
                     vizCount++;
                     updateProgress(70 + (vizCount / FREQUENCIES.length) * 20, `Generated ${vizCount}/${FREQUENCIES.length} visualizations...`);
