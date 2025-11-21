@@ -1890,6 +1890,22 @@ self.onmessage = function(e) {
                     console.warn(`[Parse] ⚠ Failed to parse ${parseFailures} filenames`);
                 }
                 
+                // DIAGNOSTIC: Check if hasRed/hasBlue are preserved
+                console.log(`[Parse] Checking color flags after merge...`);
+                const sampleParsed = parsedData[0];
+                console.log(`[Parse] Sample parsed data:`, {
+                    filename: sampleParsed.filename,
+                    participant: sampleParsed.participant,
+                    frequency: sampleParsed.frequency,
+                    hasRed: sampleParsed.hasRed,
+                    hasBlue: sampleParsed.hasBlue,
+                    normalizedTrial: sampleParsed.normalizedTrial
+                });
+                const hasRedInParsed = parsedData.filter(d => d.hasRed === true).length;
+                const hasBlueInParsed = parsedData.filter(d => d.hasBlue === true).length;
+                console.log(`[Parse] Files with hasRed=true: ${hasRedInParsed}`);
+                console.log(`[Parse] Files with hasBlue=true: ${hasBlueInParsed}`);
+                
                 // Normalize trial numbers
                 console.log('[Trial] Starting trial number normalization...');
                 normalizeTrialNumbers(parsedData);
@@ -1909,6 +1925,8 @@ self.onmessage = function(e) {
                 let blueContoursFound = 0;
                 let redContoursEmpty = 0;
                 let blueContoursEmpty = 0;
+                let filesWithHasRedTrue = 0;
+                let filesWithHasBlueTrue = 0;
                 
                 for (const data of parsedData) {
                     if (processingCancelled) throw new Error('Processing cancelled');
@@ -1920,6 +1938,10 @@ self.onmessage = function(e) {
                     }
                     
                     processedFiles++;
+                    
+                    // Count how many have hasRed/hasBlue flags
+                    if (data.hasRed === true) filesWithHasRedTrue++;
+                    if (data.hasBlue === true) filesWithHasBlueTrue++;
                     
                     // Extract red shape
                     if (data.hasRed) {
@@ -1990,6 +2012,8 @@ self.onmessage = function(e) {
                 console.log(`[Shapes] Contour extraction diagnostics:`);
                 console.log(`[Shapes]   Files with shapes to process: ${processedFiles}`);
                 console.log(`[Shapes]   Skipped (extra trials): ${skippedExtraTrials}`);
+                console.log(`[Shapes]   Files where hasRed === true: ${filesWithHasRedTrue}`);
+                console.log(`[Shapes]   Files where hasBlue === true: ${filesWithHasBlueTrue}`);
                 console.log(`[Shapes]   Red contours found: ${redContoursFound}`);
                 console.log(`[Shapes]   Red contours empty: ${redContoursEmpty}`);
                 console.log(`[Shapes]   Blue contours found: ${blueContoursFound}`);
@@ -2272,8 +2296,17 @@ self.onmessage = function(e) {
             URL.revokeObjectURL(workerBlobUrl);
         });
         
+        // Generate timestamp automatically
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        const timestamp = `${year}-${month}-${day} ${hours}:${minutes} PST`;
+        
         console.log('%c🎵 Sound Object Analyzer v5.0 Complete', 'color: #8B5CF6; font-size: 16px; font-weight: bold');
-        console.log('%c📅 Last Updated: 2024-11-21 01:50 PST', 'color: #6B7280; font-size: 12px; font-style: italic');
+        console.log(`%c📅 Last Updated: ${timestamp}`, 'color: #6B7280; font-size: 12px; font-style: italic');
         console.log(`%c✓ ${CPU_CORES} cores, ${MAX_PARALLEL_WORKERS} workers`, 'color: #10B981');
         console.log('%c✓ Advanced contour detection', 'color: #10B981');
         console.log('%c✓ MAD outlier filtering', 'color: #10B981');
