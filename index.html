@@ -664,10 +664,10 @@
             
             function calculateArea(contourPoints, size) {
                 const drawn = new Set();
+                const center = size / 2;
+                const scale = size / (2 * UNIT_RANGE);
                 
                 contourPoints.forEach(point => {
-                    const center = size / 2;
-                    const scale = size / (2 * UNIT_RANGE);
                     const canvasX = Math.round(center + point.x * scale);
                     const canvasY = Math.round(center - point.y * scale);
                     
@@ -836,18 +836,35 @@
                 updateWorkersMetric();
                 
                 const img = new Image();
+                let objectUrl = null;
+                
                 img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = CANVAS_SIZE;
-                    canvas.height = CANVAS_SIZE;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
-                    const imageData = ctx.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-                    
-                    worker.postMessage({ imageData, filename: file.name });
+                    try {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = CANVAS_SIZE;
+                        canvas.height = CANVAS_SIZE;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+                        const imageData = ctx.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+                        
+                        // Clean up object URL after image is loaded
+                        if (objectUrl) {
+                            URL.revokeObjectURL(objectUrl);
+                            objectUrl = null;
+                        }
+                        
+                        worker.postMessage({ imageData, filename: file.name });
+                    } catch (err) {
+                        if (objectUrl) URL.revokeObjectURL(objectUrl);
+                        activeWorkers.delete(worker);
+                        worker.terminate();
+                        updateWorkersMetric();
+                        reject(new Error(`Failed to process image: ${file.name} - ${err.message}`));
+                    }
                 };
                 
-                img.onerror = () => {
+                img.onerror = (err) => {
+                    if (objectUrl) URL.revokeObjectURL(objectUrl);
                     activeWorkers.delete(worker);
                     worker.terminate();
                     updateWorkersMetric();
@@ -867,13 +884,24 @@
                 };
                 
                 worker.onerror = (err) => {
+                    if (objectUrl) URL.revokeObjectURL(objectUrl);
                     activeWorkers.delete(worker);
                     worker.terminate();
                     updateWorkersMetric();
-                    reject(err);
+                    reject(new Error(`Worker error for ${file.name}: ${err.message || 'Unknown error'}`));
                 };
                 
-                img.src = URL.createObjectURL(file.blob);
+                // Create object URL and set image source
+                try {
+                    objectUrl = URL.createObjectURL(file.blob);
+                    img.src = objectUrl;
+                } catch (err) {
+                    if (objectUrl) URL.revokeObjectURL(objectUrl);
+                    activeWorkers.delete(worker);
+                    worker.terminate();
+                    updateWorkersMetric();
+                    reject(new Error(`Failed to create object URL for ${file.name}: ${err.message}`));
+                }
             });
         }
         
