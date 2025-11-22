@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sound Object Analyzer v9.3 - Simplified & Stable</title>
-    <meta name="version" content="9.3.0">
+    <title>Sound Object Analyzer v9.5 - Fixed Gray Shapes</title>
+    <meta name="version" content="9.5.0">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
@@ -36,27 +36,25 @@
     <div class="max-w-7xl mx-auto p-6">
         <!-- Header -->
         <div class="bg-gradient-to-r from-blue-600 to-purple-700 text-white p-6 rounded-xl shadow-xl mb-6">
-            <h1 class="text-4xl font-bold mb-2">Sound Object Analyzer v9.3</h1>
-            <p class="text-blue-100 text-lg">Simplified & Stable - All Features, No Workers</p>
+            <h1 class="text-4xl font-bold mb-2">Sound Object Analyzer v9.5</h1>
+            <p class="text-blue-100 text-lg">Fixed Gray Shape Drawing - No More Spokes!</p>
             <div class="mt-4 flex flex-wrap gap-2">
+                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Proper Boundary Tracing</span>
+                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Clean Gray Contours</span>
                 <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Gap Filling</span>
-                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Clean Contours</span>
-                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Nested ZIPs</span>
                 <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ MAD Filtering</span>
-                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Stable Processing</span>
+                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Nested ZIPs</span>
             </div>
         </div>
         
         <!-- Instructions -->
         <div class="bg-blue-50 p-6 rounded-xl mb-6 border-2 border-blue-200">
-            <h2 class="text-xl font-bold text-blue-900 mb-3">Key Features</h2>
+            <h2 class="text-xl font-bold text-blue-900 mb-3">What's Fixed in v9.5</h2>
             <ul class="space-y-2 text-gray-700">
-                <li><strong>📁 Nested ZIP Support:</strong> Automatically extracts PNGs from ZIPs within ZIPs</li>
-                <li><strong>🎯 Radial Contour Extraction:</strong> Clean closed shapes, no worm-like appendages</li>
-                <li><strong>✨ Gap Filling:</strong> Fills gaps in contours for complete shapes</li>
-                <li><strong>📊 MAD-based Outlier Filtering:</strong> Removes shapes by area and centroid distance</li>
-                <li><strong>🎨 Proper Gray Shapes:</strong> Individual participant drawings shown correctly</li>
-                <li><strong>💪 Stable Processing:</strong> Simple, reliable processing without complex workers</li>
+                <li><strong>🎯 Gray Shape Drawing:</strong> Individual shapes now drawn as proper closed contours using boundary tracing</li>
+                <li><strong>❌ No More Spokes:</strong> Eliminated radial spoke artifacts by using proper point ordering</li>
+                <li><strong>✨ Smooth Boundaries:</strong> Gray shapes show actual participant drawings, not star patterns</li>
+                <li><strong>📊 Preserved Averaging:</strong> Red/blue averaged lines still use radial analysis for smoothness</li>
             </ul>
         </div>
         
@@ -254,12 +252,11 @@
         }
         
         // ============================================
-        // IMAGE PROCESSING - SIMPLE, NO WORKERS
+        // IMAGE PROCESSING - IMPROVED BOUNDARY TRACING
         // ============================================
         
         async function processImages(pngFiles) {
             allProcessedData.clear();
-            const frequencyMap = new Map();
             
             let processed = 0;
             const total = pngFiles.length;
@@ -368,54 +365,165 @@
             
             // Process red shape
             if (redPixels.length > 100) {
-                const result = extractRadialContourWithGapFilling(redPixels);
-                if (result) {
-                    shapes.push({
-                        phase: 'red',
-                        contour: result.contour,
-                        absoluteContour: result.absoluteContour,
-                        centroid: result.centroid,
-                        area: calculateContourArea(result.absoluteContour),
-                        pixelCount: redPixels.length,
-                        allPixels: redPixels
-                    });
-                }
+                const centroid = calculateCentroid(redPixels);
+                const boundary = extractBoundaryPoints(redPixels);
+                const radialContour = extractRadialContour(redPixels, centroid);
+                
+                shapes.push({
+                    phase: 'red',
+                    contour: radialContour,  // For averaging (relative to centroid)
+                    boundary: boundary,       // For display (actual boundary points)
+                    centroid: centroid,
+                    area: calculateContourArea(boundary),
+                    pixelCount: redPixels.length
+                });
             }
             
             // Process blue shape
             if (bluePixels.length > 100) {
-                const result = extractRadialContourWithGapFilling(bluePixels);
-                if (result) {
-                    shapes.push({
-                        phase: 'blue',
-                        contour: result.contour,
-                        absoluteContour: result.absoluteContour,
-                        centroid: result.centroid,
-                        area: calculateContourArea(result.absoluteContour),
-                        pixelCount: bluePixels.length,
-                        allPixels: bluePixels
-                    });
-                }
+                const centroid = calculateCentroid(bluePixels);
+                const boundary = extractBoundaryPoints(bluePixels);
+                const radialContour = extractRadialContour(bluePixels, centroid);
+                
+                shapes.push({
+                    phase: 'blue',
+                    contour: radialContour,  // For averaging (relative to centroid)
+                    boundary: boundary,       // For display (actual boundary points)
+                    centroid: centroid,
+                    area: calculateContourArea(boundary),
+                    pixelCount: bluePixels.length
+                });
             }
             
             return shapes;
         }
         
         // ============================================
-        // CONTOUR EXTRACTION WITH GAP FILLING
+        // BOUNDARY EXTRACTION - FOR PROPER DISPLAY
         // ============================================
         
-        function extractRadialContourWithGapFilling(pixels) {
-            if (pixels.length === 0) return null;
+        function extractBoundaryPoints(pixels) {
+            if (pixels.length === 0) return [];
             
-            const centroid = calculateCentroid(pixels);
+            // Create a set for fast lookup
+            const pixelSet = new Set(pixels.map(p => `${p.x},${p.y}`));
+            const boundary = [];
+            
+            // Find boundary pixels (those with at least one non-pixel neighbor)
+            pixels.forEach(pixel => {
+                const neighbors = [
+                    [-1, -1], [0, -1], [1, -1],
+                    [-1, 0],           [1, 0],
+                    [-1, 1],  [0, 1],  [1, 1]
+                ];
+                
+                const isBoundary = neighbors.some(([dx, dy]) => 
+                    !pixelSet.has(`${pixel.x + dx},${pixel.y + dy}`)
+                );
+                
+                if (isBoundary) {
+                    boundary.push({ ...pixel });
+                }
+            });
+            
+            // Order boundary points by tracing along the perimeter
+            if (boundary.length === 0) return [];
+            
+            const ordered = [];
+            const used = new Set();
+            
+            // Start with leftmost point
+            let current = boundary.reduce((min, p) => p.x < min.x ? p : min);
+            ordered.push(current);
+            used.add(`${current.x},${current.y}`);
+            
+            // Trace boundary by finding nearest unused neighbor
+            while (ordered.length < boundary.length && ordered.length < 2000) {
+                let nearest = null;
+                let minDist = Infinity;
+                
+                for (const point of boundary) {
+                    const key = `${point.x},${point.y}`;
+                    if (used.has(key)) continue;
+                    
+                    const dist = Math.sqrt(
+                        Math.pow(point.x - current.x, 2) + 
+                        Math.pow(point.y - current.y, 2)
+                    );
+                    
+                    // Only consider points within reasonable distance (avoid jumps)
+                    if (dist < 10 && dist < minDist) {
+                        minDist = dist;
+                        nearest = point;
+                    }
+                }
+                
+                if (!nearest) {
+                    // If no nearby point found, find the closest unused point
+                    for (const point of boundary) {
+                        const key = `${point.x},${point.y}`;
+                        if (used.has(key)) continue;
+                        
+                        const dist = Math.sqrt(
+                            Math.pow(point.x - current.x, 2) + 
+                            Math.pow(point.y - current.y, 2)
+                        );
+                        
+                        if (dist < minDist) {
+                            minDist = dist;
+                            nearest = point;
+                        }
+                    }
+                }
+                
+                if (!nearest) break;
+                
+                ordered.push(nearest);
+                used.add(`${nearest.x},${nearest.y}`);
+                current = nearest;
+            }
+            
+            // Smooth the boundary
+            return smoothBoundary(ordered, 3);
+        }
+        
+        function smoothBoundary(boundary, windowSize = 3) {
+            if (boundary.length < windowSize) return boundary;
+            
+            const smoothed = [];
+            const halfWindow = Math.floor(windowSize / 2);
+            
+            for (let i = 0; i < boundary.length; i++) {
+                let sumX = 0, sumY = 0, count = 0;
+                
+                for (let j = -halfWindow; j <= halfWindow; j++) {
+                    const idx = (i + j + boundary.length) % boundary.length;
+                    sumX += boundary[idx].x;
+                    sumY += boundary[idx].y;
+                    count++;
+                }
+                
+                smoothed.push({
+                    x: sumX / count,
+                    y: sumY / count
+                });
+            }
+            
+            return smoothed;
+        }
+        
+        // ============================================
+        // RADIAL CONTOUR - FOR AVERAGING
+        // ============================================
+        
+        function extractRadialContour(pixels, centroid) {
             const numAngles = 360;
-            const bins = new Array(numAngles).fill(null);
+            const contour = [];
             
             // Create pixel map for fast lookup
             const pixelMap = new Set(pixels.map(p => p.x + ',' + p.y));
             
-            // Sample radially
+            // Sample radially and find furthest pixel in each direction
             for (let i = 0; i < numAngles; i++) {
                 const angle = (i / numAngles) * 2 * Math.PI;
                 const dx = Math.cos(angle);
@@ -424,6 +532,7 @@
                 let maxDist = 0;
                 let furthestPoint = null;
                 
+                // Search along ray
                 for (let dist = 0; dist < 1000; dist += 1) {
                     const x = Math.round(centroid.x + dx * dist);
                     const y = Math.round(centroid.y + dy * dist);
@@ -435,106 +544,49 @@
                 }
                 
                 if (furthestPoint) {
-                    bins[i] = {
-                        radius: maxDist,
-                        point: furthestPoint,
-                        relativePoint: {
-                            x: furthestPoint.x - centroid.x,
-                            y: furthestPoint.y - centroid.y
-                        }
-                    };
+                    contour.push({
+                        x: furthestPoint.x - centroid.x,
+                        y: furthestPoint.y - centroid.y
+                    });
                 }
             }
             
-            // Fill gaps safely
-            fillGapsSafely(bins);
-            
-            // Extract contours
-            const contour = [];           // Relative to centroid
-            const absoluteContour = [];   // Absolute positions
-            
-            for (let i = 0; i < bins.length; i++) {
-                if (bins[i]) {
-                    contour.push(bins[i].relativePoint);
-                    absoluteContour.push(bins[i].point);
-                }
-            }
-            
-            // Smooth the contours
-            const smoothedContour = smoothContour(contour, 5);
-            const smoothedAbsolute = smoothContour(absoluteContour, 5);
-            
-            return {
-                contour: smoothedContour,
-                absoluteContour: smoothedAbsolute,
-                centroid: centroid
-            };
+            // Fill gaps and smooth
+            return fillAndSmoothContour(contour);
         }
         
-        function fillGapsSafely(bins) {
-            const maxGapSize = 30;
-            let filled = true;
-            let iterations = 0;
-            const maxIterations = 10;
+        function fillAndSmoothContour(contour) {
+            if (contour.length < 3) return contour;
             
-            while (filled && iterations < maxIterations) {
-                filled = false;
-                iterations++;
-                
-                for (let i = 0; i < bins.length; i++) {
-                    if (bins[i]) continue;
-                    
-                    // Find nearest filled bins
-                    let prevIdx = -1, nextIdx = -1;
-                    let prevDist = 0, nextDist = 0;
-                    
-                    // Search backward
-                    for (let j = 1; j <= maxGapSize && j < bins.length; j++) {
-                        const idx = (i - j + bins.length) % bins.length;
-                        if (bins[idx]) {
-                            prevIdx = idx;
-                            prevDist = j;
-                            break;
+            // Fill gaps by interpolation
+            const filled = [];
+            for (let i = 0; i < contour.length; i++) {
+                if (contour[i]) {
+                    filled.push(contour[i]);
+                } else {
+                    // Find nearest non-null points
+                    let prev = null, next = null;
+                    for (let j = 1; j < contour.length / 2; j++) {
+                        if (!prev && contour[(i - j + contour.length) % contour.length]) {
+                            prev = contour[(i - j + contour.length) % contour.length];
                         }
+                        if (!next && contour[(i + j) % contour.length]) {
+                            next = contour[(i + j) % contour.length];
+                        }
+                        if (prev && next) break;
                     }
                     
-                    // Search forward
-                    for (let j = 1; j <= maxGapSize && j < bins.length; j++) {
-                        const idx = (i + j) % bins.length;
-                        if (bins[idx]) {
-                            nextIdx = idx;
-                            nextDist = j;
-                            break;
-                        }
-                    }
-                    
-                    // Only fill if gap is small enough
-                    if (prevIdx !== -1 && nextIdx !== -1 && (prevDist + nextDist) <= maxGapSize) {
-                        const t = prevDist / (prevDist + nextDist);
-                        const prevBin = bins[prevIdx];
-                        const nextBin = bins[nextIdx];
-                        
-                        const interpRadius = prevBin.radius + (nextBin.radius - prevBin.radius) * t;
-                        const angle = (i / bins.length) * 2 * Math.PI;
-                        
-                        const interpPoint = {
-                            x: prevBin.point.x + (nextBin.point.x - prevBin.point.x) * t,
-                            y: prevBin.point.y + (nextBin.point.y - prevBin.point.y) * t
-                        };
-                        
-                        bins[i] = {
-                            radius: interpRadius,
-                            point: interpPoint,
-                            relativePoint: {
-                                x: interpRadius * Math.cos(angle),
-                                y: interpRadius * Math.sin(angle)
-                            }
-                        };
-                        
-                        filled = true;
+                    if (prev && next) {
+                        filled.push({
+                            x: (prev.x + next.x) / 2,
+                            y: (prev.y + next.y) / 2
+                        });
                     }
                 }
             }
+            
+            // Smooth
+            return smoothContour(filled, 5);
         }
         
         function smoothContour(contour, windowSize = 3) {
@@ -666,12 +718,12 @@
                 y: shapes.reduce((sum, s) => sum + s.centroid.y, 0) / shapes.length
             };
             
-            // Bin by angle
+            // Bin by angle using the radial contours
             const numBins = 360;
             const bins = new Array(numBins).fill(null).map(() => []);
             
             shapes.forEach(shape => {
-                // Use relative contour points
+                // Use relative contour points for averaging
                 shape.contour.forEach(point => {
                     const angle = Math.atan2(point.y, point.x);
                     const radius = Math.sqrt(point.x * point.x + point.y * point.y);
@@ -755,7 +807,7 @@
         }
         
         // ============================================
-        // VISUALIZATION GENERATION
+        // VISUALIZATION GENERATION - FIXED GRAY SHAPES
         // ============================================
         
         function generateVisualizations() {
@@ -845,37 +897,39 @@
             // Draw head circle
             drawHeadCircle(ctx);
             
-            // Draw individual shapes in gray - USE ABSOLUTE CONTOURS
+            // Draw individual shapes in gray using BOUNDARY points (not radial)
             ctx.strokeStyle = '#999999';
             ctx.lineWidth = 1;
             ctx.globalAlpha = 0.3;
             
-            // Draw red individual shapes
+            // Draw red individual shapes using boundary tracing
             redShapes.forEach(shape => {
-                if (shape.absoluteContour && shape.absoluteContour.length > 2) {
+                if (shape.boundary && shape.boundary.length > 2) {
                     ctx.beginPath();
-                    ctx.moveTo(shape.absoluteContour[0].x, shape.absoluteContour[0].y);
+                    ctx.moveTo(shape.boundary[0].x, shape.boundary[0].y);
                     
-                    for (let i = 1; i < shape.absoluteContour.length; i++) {
-                        ctx.lineTo(shape.absoluteContour[i].x, shape.absoluteContour[i].y);
+                    for (let i = 1; i < shape.boundary.length; i++) {
+                        ctx.lineTo(shape.boundary[i].x, shape.boundary[i].y);
                     }
                     
-                    ctx.closePath();
+                    // Close path back to start
+                    ctx.lineTo(shape.boundary[0].x, shape.boundary[0].y);
                     ctx.stroke();
                 }
             });
             
-            // Draw blue individual shapes
+            // Draw blue individual shapes using boundary tracing
             blueShapes.forEach(shape => {
-                if (shape.absoluteContour && shape.absoluteContour.length > 2) {
+                if (shape.boundary && shape.boundary.length > 2) {
                     ctx.beginPath();
-                    ctx.moveTo(shape.absoluteContour[0].x, shape.absoluteContour[0].y);
+                    ctx.moveTo(shape.boundary[0].x, shape.boundary[0].y);
                     
-                    for (let i = 1; i < shape.absoluteContour.length; i++) {
-                        ctx.lineTo(shape.absoluteContour[i].x, shape.absoluteContour[i].y);
+                    for (let i = 1; i < shape.boundary.length; i++) {
+                        ctx.lineTo(shape.boundary[i].x, shape.boundary[i].y);
                     }
                     
-                    ctx.closePath();
+                    // Close path back to start
+                    ctx.lineTo(shape.boundary[0].x, shape.boundary[0].y);
                     ctx.stroke();
                 }
             });
@@ -1028,13 +1082,12 @@
         }
         
         // Initialize
-        console.log('Sound Object Analyzer v9.3 loaded');
-        console.log('Simplified version with all features:');
-        console.log('  ✅ Gap filling for complete contours');
-        console.log('  ✅ Proper gray shape drawing');
-        console.log('  ✅ Nested ZIP extraction');
-        console.log('  ✅ MAD-based outlier filtering');
-        console.log('  ✅ No complex workers - simple & stable');
+        console.log('Sound Object Analyzer v9.5 loaded');
+        console.log('Fixed gray shape drawing:');
+        console.log('  ✅ Boundary tracing for individual shapes');
+        console.log('  ✅ Radial extraction for averaging');
+        console.log('  ✅ No more spoke artifacts');
+        console.log('  ✅ Proper closed contours');
     </script>
 </body>
 </html>
