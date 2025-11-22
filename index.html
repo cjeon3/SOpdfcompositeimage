@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sound Object Analyzer v9.5 - Fixed Gray Shapes</title>
-    <meta name="version" content="9.5.0">
+    <title>Sound Object Analyzer v9.6 - Early Marker Removal</title>
+    <meta name="version" content="9.6.0">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
@@ -36,25 +36,24 @@
     <div class="max-w-7xl mx-auto p-6">
         <!-- Header -->
         <div class="bg-gradient-to-r from-blue-600 to-purple-700 text-white p-6 rounded-xl shadow-xl mb-6">
-            <h1 class="text-4xl font-bold mb-2">Sound Object Analyzer v9.5</h1>
-            <p class="text-blue-100 text-lg">Fixed Gray Shape Drawing - No More Spokes!</p>
+            <h1 class="text-4xl font-bold mb-2">Sound Object Analyzer v9.6</h1>
+            <p class="text-blue-100 text-lg">Early Centroid Marker Removal - Clean Processing Pipeline</p>
             <div class="mt-4 flex flex-wrap gap-2">
-                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Proper Boundary Tracing</span>
-                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Clean Gray Contours</span>
-                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Gap Filling</span>
-                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ MAD Filtering</span>
-                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Nested ZIPs</span>
+                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Removes + First</span>
+                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Then Traces Boundaries</span>
+                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Clean Shapes</span>
+                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Accurate Processing</span>
             </div>
         </div>
         
         <!-- Instructions -->
         <div class="bg-blue-50 p-6 rounded-xl mb-6 border-2 border-blue-200">
-            <h2 class="text-xl font-bold text-blue-900 mb-3">What's Fixed in v9.5</h2>
+            <h2 class="text-xl font-bold text-blue-900 mb-3">Smart Processing Order in v9.6</h2>
             <ul class="space-y-2 text-gray-700">
-                <li><strong>🎯 Gray Shape Drawing:</strong> Individual shapes now drawn as proper closed contours using boundary tracing</li>
-                <li><strong>❌ No More Spokes:</strong> Eliminated radial spoke artifacts by using proper point ordering</li>
-                <li><strong>✨ Smooth Boundaries:</strong> Gray shapes show actual participant drawings, not star patterns</li>
-                <li><strong>📊 Preserved Averaging:</strong> Red/blue averaged lines still use radial analysis for smoothness</li>
+                <li><strong>1️⃣ First:</strong> Detect and remove perfect vertical/horizontal + markers</li>
+                <li><strong>2️⃣ Then:</strong> Process cleaned pixels for boundary extraction</li>
+                <li><strong>3️⃣ Finally:</strong> Apply gap filling and smoothing to clean shapes</li>
+                <li><strong>✨ Result:</strong> No contamination from centroid markers in final shapes</li>
             </ul>
         </div>
         
@@ -252,7 +251,7 @@
         }
         
         // ============================================
-        // IMAGE PROCESSING - IMPROVED BOUNDARY TRACING
+        // IMAGE PROCESSING WITH EARLY MARKER REMOVAL
         // ============================================
         
         async function processImages(pngFiles) {
@@ -363,157 +362,273 @@
             
             const shapes = [];
             
-            // Process red shape
+            // Process red shape - REMOVE MARKERS FIRST
             if (redPixels.length > 100) {
-                const centroid = calculateCentroid(redPixels);
-                const boundary = extractBoundaryPoints(redPixels);
-                const radialContour = extractRadialContour(redPixels, centroid);
-                
-                shapes.push({
-                    phase: 'red',
-                    contour: radialContour,  // For averaging (relative to centroid)
-                    boundary: boundary,       // For display (actual boundary points)
-                    centroid: centroid,
-                    area: calculateContourArea(boundary),
-                    pixelCount: redPixels.length
-                });
+                const cleanedRed = removeCentroidMarkers(redPixels);
+                if (cleanedRed.length > 100) {
+                    const centroid = calculateCentroid(cleanedRed);
+                    const hull = convexHull(cleanedRed);
+                    const radialContour = extractRadialContour(cleanedRed, centroid);
+                    
+                    shapes.push({
+                        phase: 'red',
+                        contour: radialContour,  // For averaging
+                        hull: hull,               // For display
+                        centroid: centroid,
+                        area: calculateHullArea(hull),
+                        pixelCount: cleanedRed.length
+                    });
+                }
             }
             
-            // Process blue shape
+            // Process blue shape - REMOVE MARKERS FIRST
             if (bluePixels.length > 100) {
-                const centroid = calculateCentroid(bluePixels);
-                const boundary = extractBoundaryPoints(bluePixels);
-                const radialContour = extractRadialContour(bluePixels, centroid);
-                
-                shapes.push({
-                    phase: 'blue',
-                    contour: radialContour,  // For averaging (relative to centroid)
-                    boundary: boundary,       // For display (actual boundary points)
-                    centroid: centroid,
-                    area: calculateContourArea(boundary),
-                    pixelCount: bluePixels.length
-                });
+                const cleanedBlue = removeCentroidMarkers(bluePixels);
+                if (cleanedBlue.length > 100) {
+                    const centroid = calculateCentroid(cleanedBlue);
+                    const hull = convexHull(cleanedBlue);
+                    const radialContour = extractRadialContour(cleanedBlue, centroid);
+                    
+                    shapes.push({
+                        phase: 'blue',
+                        contour: radialContour,  // For averaging
+                        hull: hull,               // For display
+                        centroid: centroid,
+                        area: calculateHullArea(hull),
+                        pixelCount: cleanedBlue.length
+                    });
+                }
             }
             
             return shapes;
         }
         
         // ============================================
-        // BOUNDARY EXTRACTION - FOR PROPER DISPLAY
+        // IMPROVED CENTROID MARKER REMOVAL
         // ============================================
         
-        function extractBoundaryPoints(pixels) {
-            if (pixels.length === 0) return [];
+        function removeCentroidMarkers(pixels) {
+            if (pixels.length === 0) return pixels;
             
-            // Create a set for fast lookup
-            const pixelSet = new Set(pixels.map(p => `${p.x},${p.y}`));
-            const boundary = [];
+            // First, detect perfectly vertical and horizontal lines
+            const verticalLines = detectVerticalLines(pixels);
+            const horizontalLines = detectHorizontalLines(pixels);
             
-            // Find boundary pixels (those with at least one non-pixel neighbor)
-            pixels.forEach(pixel => {
-                const neighbors = [
-                    [-1, -1], [0, -1], [1, -1],
-                    [-1, 0],           [1, 0],
-                    [-1, 1],  [0, 1],  [1, 1]
-                ];
+            // Find where they cross to locate centroid markers
+            const crossPoints = findCrossingPoints(verticalLines, horizontalLines);
+            
+            // Remove pixels that are part of centroid markers
+            // Centroid markers are typically 10-20 pixels in each direction
+            const markerHalfLength = 10; // Adjust based on actual marker size
+            const markerThickness = 2; // Line thickness
+            
+            const markerPixels = new Set();
+            
+            crossPoints.forEach(cross => {
+                // Mark vertical line pixels for removal
+                for (let y = cross.y - markerHalfLength; y <= cross.y + markerHalfLength; y++) {
+                    for (let x = cross.x - markerThickness; x <= cross.x + markerThickness; x++) {
+                        markerPixels.add(`${x},${y}`);
+                    }
+                }
                 
-                const isBoundary = neighbors.some(([dx, dy]) => 
-                    !pixelSet.has(`${pixel.x + dx},${pixel.y + dy}`)
-                );
-                
-                if (isBoundary) {
-                    boundary.push({ ...pixel });
+                // Mark horizontal line pixels for removal
+                for (let x = cross.x - markerHalfLength; x <= cross.x + markerHalfLength; x++) {
+                    for (let y = cross.y - markerThickness; y <= cross.y + markerThickness; y++) {
+                        markerPixels.add(`${x},${y}`);
+                    }
                 }
             });
             
-            // Order boundary points by tracing along the perimeter
-            if (boundary.length === 0) return [];
-            
-            const ordered = [];
-            const used = new Set();
-            
-            // Start with leftmost point
-            let current = boundary.reduce((min, p) => p.x < min.x ? p : min);
-            ordered.push(current);
-            used.add(`${current.x},${current.y}`);
-            
-            // Trace boundary by finding nearest unused neighbor
-            while (ordered.length < boundary.length && ordered.length < 2000) {
-                let nearest = null;
-                let minDist = Infinity;
-                
-                for (const point of boundary) {
-                    const key = `${point.x},${point.y}`;
-                    if (used.has(key)) continue;
-                    
-                    const dist = Math.sqrt(
-                        Math.pow(point.x - current.x, 2) + 
-                        Math.pow(point.y - current.y, 2)
-                    );
-                    
-                    // Only consider points within reasonable distance (avoid jumps)
-                    if (dist < 10 && dist < minDist) {
-                        minDist = dist;
-                        nearest = point;
-                    }
-                }
-                
-                if (!nearest) {
-                    // If no nearby point found, find the closest unused point
-                    for (const point of boundary) {
-                        const key = `${point.x},${point.y}`;
-                        if (used.has(key)) continue;
-                        
-                        const dist = Math.sqrt(
-                            Math.pow(point.x - current.x, 2) + 
-                            Math.pow(point.y - current.y, 2)
-                        );
-                        
-                        if (dist < minDist) {
-                            minDist = dist;
-                            nearest = point;
-                        }
-                    }
-                }
-                
-                if (!nearest) break;
-                
-                ordered.push(nearest);
-                used.add(`${nearest.x},${nearest.y}`);
-                current = nearest;
-            }
-            
-            // Smooth the boundary
-            return smoothBoundary(ordered, 3);
+            // Return pixels without the marker pixels
+            return pixels.filter(p => !markerPixels.has(`${p.x},${p.y}`));
         }
         
-        function smoothBoundary(boundary, windowSize = 3) {
-            if (boundary.length < windowSize) return boundary;
+        function detectVerticalLines(pixels) {
+            // Group pixels by X coordinate
+            const xGroups = new Map();
+            pixels.forEach(p => {
+                if (!xGroups.has(p.x)) {
+                    xGroups.set(p.x, []);
+                }
+                xGroups.get(p.x).push(p.y);
+            });
             
-            const smoothed = [];
-            const halfWindow = Math.floor(windowSize / 2);
-            
-            for (let i = 0; i < boundary.length; i++) {
-                let sumX = 0, sumY = 0, count = 0;
+            // Find X coordinates with many vertically aligned pixels
+            const verticalLines = [];
+            xGroups.forEach((yValues, x) => {
+                yValues.sort((a, b) => a - b);
                 
-                for (let j = -halfWindow; j <= halfWindow; j++) {
-                    const idx = (i + j + boundary.length) % boundary.length;
-                    sumX += boundary[idx].x;
-                    sumY += boundary[idx].y;
-                    count++;
+                // Check for continuous vertical segments
+                let segments = [];
+                let currentSegment = [yValues[0]];
+                
+                for (let i = 1; i < yValues.length; i++) {
+                    if (yValues[i] - yValues[i-1] <= 2) { // Allow small gaps
+                        currentSegment.push(yValues[i]);
+                    } else {
+                        if (currentSegment.length > 10) { // Minimum length for a line
+                            segments.push({
+                                x: x,
+                                yMin: Math.min(...currentSegment),
+                                yMax: Math.max(...currentSegment),
+                                length: currentSegment.length
+                            });
+                        }
+                        currentSegment = [yValues[i]];
+                    }
                 }
                 
-                smoothed.push({
-                    x: sumX / count,
-                    y: sumY / count
-                });
-            }
+                if (currentSegment.length > 10) {
+                    segments.push({
+                        x: x,
+                        yMin: Math.min(...currentSegment),
+                        yMax: Math.max(...currentSegment),
+                        length: currentSegment.length
+                    });
+                }
+                
+                verticalLines.push(...segments);
+            });
             
-            return smoothed;
+            return verticalLines;
+        }
+        
+        function detectHorizontalLines(pixels) {
+            // Group pixels by Y coordinate
+            const yGroups = new Map();
+            pixels.forEach(p => {
+                if (!yGroups.has(p.y)) {
+                    yGroups.set(p.y, []);
+                }
+                yGroups.get(p.y).push(p.x);
+            });
+            
+            // Find Y coordinates with many horizontally aligned pixels
+            const horizontalLines = [];
+            yGroups.forEach((xValues, y) => {
+                xValues.sort((a, b) => a - b);
+                
+                // Check for continuous horizontal segments
+                let segments = [];
+                let currentSegment = [xValues[0]];
+                
+                for (let i = 1; i < xValues.length; i++) {
+                    if (xValues[i] - xValues[i-1] <= 2) { // Allow small gaps
+                        currentSegment.push(xValues[i]);
+                    } else {
+                        if (currentSegment.length > 10) { // Minimum length for a line
+                            segments.push({
+                                y: y,
+                                xMin: Math.min(...currentSegment),
+                                xMax: Math.max(...currentSegment),
+                                length: currentSegment.length
+                            });
+                        }
+                        currentSegment = [xValues[i]];
+                    }
+                }
+                
+                if (currentSegment.length > 10) {
+                    segments.push({
+                        y: y,
+                        xMin: Math.min(...currentSegment),
+                        xMax: Math.max(...currentSegment),
+                        length: currentSegment.length
+                    });
+                }
+                
+                horizontalLines.push(...segments);
+            });
+            
+            return horizontalLines;
+        }
+        
+        function findCrossingPoints(verticalLines, horizontalLines) {
+            const crossings = [];
+            
+            verticalLines.forEach(vLine => {
+                horizontalLines.forEach(hLine => {
+                    // Check if lines actually cross
+                    if (vLine.x >= hLine.xMin && vLine.x <= hLine.xMax &&
+                        hLine.y >= vLine.yMin && hLine.y <= vLine.yMax) {
+                        
+                        // Check if both lines are of similar length (typical for centroid markers)
+                        const vLength = vLine.yMax - vLine.yMin;
+                        const hLength = hLine.xMax - hLine.xMin;
+                        
+                        if (Math.abs(vLength - hLength) < 10) { // Similar length
+                            crossings.push({
+                                x: vLine.x,
+                                y: hLine.y,
+                                vLength: vLength,
+                                hLength: hLength
+                            });
+                        }
+                    }
+                });
+            });
+            
+            return crossings;
         }
         
         // ============================================
-        // RADIAL CONTOUR - FOR AVERAGING
+        // CONVEX HULL FOR CLEAN SHAPES
+        // ============================================
+        
+        function convexHull(points) {
+            if (points.length < 3) return points;
+            
+            // Sort points lexicographically
+            points = points.slice().sort((a, b) => a.x === b.x ? a.y - b.y : a.x - b.x);
+            
+            // Cross product of vectors OA and OB
+            function cross(O, A, B) {
+                return (A.x - O.x) * (B.y - O.y) - (A.y - O.y) * (B.x - O.x);
+            }
+            
+            // Build lower hull
+            const lower = [];
+            for (let i = 0; i < points.length; i++) {
+                while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], points[i]) <= 0) {
+                    lower.pop();
+                }
+                lower.push(points[i]);
+            }
+            
+            // Build upper hull
+            const upper = [];
+            for (let i = points.length - 1; i >= 0; i--) {
+                while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], points[i]) <= 0) {
+                    upper.pop();
+                }
+                upper.push(points[i]);
+            }
+            
+            // Remove last point of each half because it's repeated
+            lower.pop();
+            upper.pop();
+            
+            // Concatenate lower and upper hull
+            return lower.concat(upper);
+        }
+        
+        function calculateHullArea(hull) {
+            if (hull.length < 3) return 0;
+            
+            // Shoelace formula
+            let area = 0;
+            for (let i = 0; i < hull.length; i++) {
+                const j = (i + 1) % hull.length;
+                area += hull[i].x * hull[j].y;
+                area -= hull[j].x * hull[i].y;
+            }
+            
+            return Math.abs(area / 2) / (SCALE * SCALE);
+        }
+        
+        // ============================================
+        // RADIAL CONTOUR FOR AVERAGING
         // ============================================
         
         function extractRadialContour(pixels, centroid) {
@@ -626,20 +741,6 @@
                 x: sum.x / points.length,
                 y: sum.y / points.length
             };
-        }
-        
-        function calculateContourArea(contour) {
-            if (contour.length < 3) return 0;
-            
-            // Shoelace formula
-            let area = 0;
-            for (let i = 0; i < contour.length; i++) {
-                const j = (i + 1) % contour.length;
-                area += contour[i].x * contour[j].y;
-                area -= contour[j].x * contour[i].y;
-            }
-            
-            return Math.abs(area / 2) / (SCALE * SCALE);
         }
         
         // ============================================
@@ -807,7 +908,7 @@
         }
         
         // ============================================
-        // VISUALIZATION GENERATION - FIXED GRAY SHAPES
+        // VISUALIZATION GENERATION
         // ============================================
         
         function generateVisualizations() {
@@ -897,39 +998,37 @@
             // Draw head circle
             drawHeadCircle(ctx);
             
-            // Draw individual shapes in gray using BOUNDARY points (not radial)
+            // Draw individual shapes in gray using CONVEX HULL
             ctx.strokeStyle = '#999999';
             ctx.lineWidth = 1;
             ctx.globalAlpha = 0.3;
             
-            // Draw red individual shapes using boundary tracing
+            // Draw red individual shapes using convex hull
             redShapes.forEach(shape => {
-                if (shape.boundary && shape.boundary.length > 2) {
+                if (shape.hull && shape.hull.length > 2) {
                     ctx.beginPath();
-                    ctx.moveTo(shape.boundary[0].x, shape.boundary[0].y);
+                    ctx.moveTo(shape.hull[0].x, shape.hull[0].y);
                     
-                    for (let i = 1; i < shape.boundary.length; i++) {
-                        ctx.lineTo(shape.boundary[i].x, shape.boundary[i].y);
+                    for (let i = 1; i < shape.hull.length; i++) {
+                        ctx.lineTo(shape.hull[i].x, shape.hull[i].y);
                     }
                     
-                    // Close path back to start
-                    ctx.lineTo(shape.boundary[0].x, shape.boundary[0].y);
+                    ctx.closePath();
                     ctx.stroke();
                 }
             });
             
-            // Draw blue individual shapes using boundary tracing
+            // Draw blue individual shapes using convex hull
             blueShapes.forEach(shape => {
-                if (shape.boundary && shape.boundary.length > 2) {
+                if (shape.hull && shape.hull.length > 2) {
                     ctx.beginPath();
-                    ctx.moveTo(shape.boundary[0].x, shape.boundary[0].y);
+                    ctx.moveTo(shape.hull[0].x, shape.hull[0].y);
                     
-                    for (let i = 1; i < shape.boundary.length; i++) {
-                        ctx.lineTo(shape.boundary[i].x, shape.boundary[i].y);
+                    for (let i = 1; i < shape.hull.length; i++) {
+                        ctx.lineTo(shape.hull[i].x, shape.hull[i].y);
                     }
                     
-                    // Close path back to start
-                    ctx.lineTo(shape.boundary[0].x, shape.boundary[0].y);
+                    ctx.closePath();
                     ctx.stroke();
                 }
             });
@@ -1082,12 +1181,13 @@
         }
         
         // Initialize
-        console.log('Sound Object Analyzer v9.5 loaded');
-        console.log('Fixed gray shape drawing:');
-        console.log('  ✅ Boundary tracing for individual shapes');
-        console.log('  ✅ Radial extraction for averaging');
-        console.log('  ✅ No more spoke artifacts');
-        console.log('  ✅ Proper closed contours');
+        console.log('Sound Object Analyzer v9.6 loaded');
+        console.log('Processing pipeline:');
+        console.log('  1. Detect perfect vertical/horizontal lines');
+        console.log('  2. Find crossing points (centroid markers)');
+        console.log('  3. Remove marker pixels FIRST');
+        console.log('  4. Process clean shapes with convex hull');
+        console.log('  5. Generate smooth averages');
     </script>
 </body>
 </html>
