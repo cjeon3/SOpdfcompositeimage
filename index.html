@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sound Object Analyzer - Cartesian Pipeline v2.2.55</title>
-    <meta name="version" content="2.2.55">
+    <title>Sound Object Analyzer - Cartesian Pipeline v2.2.56</title>
+    <meta name="version" content="2.2.56">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
@@ -97,14 +97,13 @@
     <div class="max-w-7xl mx-auto">
         <header class="text-center mb-8 text-white">
             <h1 class="text-4xl font-extrabold mb-2">Sound Object Analyzer</h1>
-            <p class="text-xl font-semibold opacity-90">Cartesian Pipeline v2.2.55 - Code Review: Fix pixelCount + Cleanup</p>
+            <p class="text-xl font-semibold opacity-90">Cartesian Pipeline v2.2.56 - Fixed N=1000 Samples, Topmost Start, Clockwise</p>
             <div class="mt-4 flex flex-wrap justify-center gap-2">
                 <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Google Sheets Integration</span>
-                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Adaptive Perimeter Sampling</span>
-                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Perpendicular Cross Detection (1° precision)</span>
-                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Complete Closure (Red)</span>
+                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Fixed N=1000 Samples</span>
+                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Topmost Start, Clockwise</span>
+                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Overlap Replacement Tracking</span>
                 <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Area Statistics</span>
-                <span class="bg-white/20 px-3 py-1 rounded-full text-sm">✓ Overlap Preservation</span>
             </div>
         </header>
         
@@ -193,7 +192,7 @@
                                        onchange="updateAveragingMode()">
                                 <div>
                                     <span class="font-semibold text-gray-800">Contour + Area Normalization</span>
-                                    <p class="text-xs text-gray-600 mt-1">Average contours first, then scale the result to match the median area. Produces average shapes with representative size.</p>
+                                    <p class="text-xs text-gray-600 mt-1">Average contours first, then scale the result to match the mean area. Produces average shapes with representative size.</p>
                                 </div>
                             </label>
                         </div>
@@ -269,10 +268,26 @@
                     </div>
                 </div>
             </details>
+            
+            <!-- Step 6: Overlap Replacement Statistics -->
+            <details class="step-dropdown border-orange-300 bg-gradient-to-r from-orange-50 to-orange-100" id="overlap-stats-dropdown">
+                <summary>
+                    <div class="step-number bg-orange-600">6</div>
+                    <span class="text-orange-800">Shape Replacements (Extreme Overlap)</span>
+                    <span class="arrow">▶</span>
+                </summary>
+                <div class="step-content bg-white">
+                    <div id="overlap-stats-container">
+                        <div class="text-center text-gray-500 py-8">
+                            No overlap statistics yet. Run analysis to see replacements.
+                        </div>
+                    </div>
+                </div>
+            </details>
         </div>
         
         <footer class="mt-8 text-center text-white/70 text-sm">
-            <p>Sound Object Analyzer - Cartesian Pipeline v2.2</p>
+            <p>Sound Object Analyzer - Cartesian Pipeline v2.2.56</p>
             <p>UCI Hearing & Speech Lab</p>
         </footer>
     </div>
@@ -306,9 +321,11 @@
         const REFERENCE_CIRCLE_RADIUS_PX = REFERENCE_CIRCLE_RADIUS_UNITS * SCALE_FACTOR; // 150px
         const CENTER = CANVAS_SIZE / 2; // 500px
         
-        // Minimum sample rate for contour interpolation (matches drawing tool minimum)
-        const MIN_CONTOUR_SAMPLES = 100;
-        // Sampling density: 1 sample per 0.1 units of perimeter (matches drawing tool)
+        // Fixed sample rate for all shapes: N=1000 samples
+        // All contours are resampled to exactly 1000 evenly-spaced points,
+        // starting from the topmost point and proceeding clockwise.
+        const MIN_CONTOUR_SAMPLES = 1000;
+        // Note: UNITS_PER_SAMPLE kept for backwards compatibility but not used
         const UNITS_PER_SAMPLE = 0.1;
         
         // Color thresholds for detection
@@ -324,6 +341,9 @@
         let processedImages = {};
         let compositeCanvases = {};
         let averagingMode = 'contour'; // 'contour' or 'area'
+        
+        // Tracking for extreme overlap shape replacements
+        let extremeOverlapReplacements = [];  // [{participant, trial, frequency, reason}]
         
         // Google Sheets integration state
         let sheetsData = null;          // Data from Google Sheets (all rows)
@@ -1003,12 +1023,10 @@
                 return { x: resampledContour[0].x, y: resampledContour[0].y };
             }
             
-            // The contour is already uniformly resampled (100+ points evenly spaced)
-            // This matches the drawing tool's approach:
-            //   1. Calculate path length
-            //   2. Create uniform samples: numSamples = max(100, floor(totalLength / 0.1))
-            //   3. Average all samples
-            // Our resampleContour() function already does steps 1-2, so we just average
+            // The contour is uniformly resampled (N=1000 points evenly spaced)
+            // starting from the topmost point and proceeding clockwise.
+            // We simply average all samples to get the centroid.
+            // Our resampleContour() function handles the resampling, so we just average
             
             let sumX = 0, sumY = 0;
             for (const p of resampledContour) {
@@ -2139,58 +2157,88 @@
         }
         
         /**
-         * Calculate adaptive sample count based on perimeter length in units.
-         * Matches the drawing tool's algorithm: max(100, floor(perimeterUnits / 0.1))
+         * Fixed sample count: Always return N=1000 samples.
+         * Previous adaptive sampling has been replaced with fixed sampling
+         * for consistency across all shapes.
          * 
-         * @param {Array} pixelContour - Contour points in pixel coordinates
-         * @returns {number} - Optimal sample count
+         * @param {Array} pixelContour - Contour points in pixel coordinates (unused)
+         * @returns {number} - Fixed sample count of 1000
          */
         function calculateAdaptiveSampleCount(pixelContour) {
-            if (pixelContour.length < 2) return MIN_CONTOUR_SAMPLES;
-            
-            // Calculate perimeter in pixel coordinates first
-            let perimeterPixels = 0;
-            for (let i = 0; i < pixelContour.length; i++) {
-                const p1 = pixelContour[i];
-                const p2 = pixelContour[(i + 1) % pixelContour.length];
-                perimeterPixels += Math.sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2);
-            }
-            
-            // Convert to units: 50 pixels = 1 unit
-            const perimeterUnits = perimeterPixels / SCALE_FACTOR;
-            
-            // Apply drawing tool's formula: max(100, floor(perimeter / 0.1))
-            const adaptiveCount = Math.max(MIN_CONTOUR_SAMPLES, Math.floor(perimeterUnits / UNITS_PER_SAMPLE));
-            
-            return adaptiveCount;
+            // Fixed N=1000 for all shapes - no longer adaptive
+            return MIN_CONTOUR_SAMPLES; // 1000
         }
         
+        /**
+         * Resample contour to exactly targetSamples points, starting from the topmost point
+         * and proceeding CLOCKWISE around the contour.
+         * 
+         * "Topmost" refers to highest Y in grid coordinates (lowest Y in canvas/pixel coordinates).
+         * "Clockwise" is visual clockwise when viewing the screen (top → right → bottom → left).
+         * 
+         * @param {Array} contour - Original contour points in PIXEL coordinates
+         * @param {number} targetSamples - Number of samples (default 1000)
+         * @returns {Array} - Resampled contour starting from topmost point, going clockwise
+         */
         function resampleContour(contour, targetSamples) {
             if (contour.length < 2) return contour;
             
-            // Calculate total path length
+            // Step 1: Find the topmost point (smallest Y in canvas coordinates = highest in grid)
+            let topmostIndex = 0;
+            let topmostY = contour[0].y;
+            for (let i = 1; i < contour.length; i++) {
+                if (contour[i].y < topmostY) {
+                    topmostY = contour[i].y;
+                    topmostIndex = i;
+                }
+            }
+            
+            // Step 2: Rotate contour to start from topmost point
+            let rotatedContour = [
+                ...contour.slice(topmostIndex),
+                ...contour.slice(0, topmostIndex)
+            ];
+            
+            // Step 3: Check winding direction and ensure CLOCKWISE
+            // In canvas coordinates (Y down), clockwise has NEGATIVE signed area
+            // Formula: signedArea = 0.5 * Σ(x_i * y_{i+1} - x_{i+1} * y_i)
+            let signedArea = 0;
+            for (let i = 0; i < rotatedContour.length; i++) {
+                const p1 = rotatedContour[i];
+                const p2 = rotatedContour[(i + 1) % rotatedContour.length];
+                signedArea += (p1.x * p2.y - p2.x * p1.y);
+            }
+            signedArea *= 0.5;
+            
+            // If positive (counter-clockwise), reverse to make clockwise
+            // Keep first point, reverse the rest
+            if (signedArea > 0) {
+                rotatedContour = [rotatedContour[0], ...rotatedContour.slice(1).reverse()];
+            }
+            
+            // Step 4: Calculate total path length
             let totalLength = 0;
             const segmentLengths = [];
             
-            for (let i = 0; i < contour.length; i++) {
-                const p1 = contour[i];
-                const p2 = contour[(i + 1) % contour.length];
+            for (let i = 0; i < rotatedContour.length; i++) {
+                const p1 = rotatedContour[i];
+                const p2 = rotatedContour[(i + 1) % rotatedContour.length];
                 const len = Math.sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2);
                 segmentLengths.push(len);
                 totalLength += len;
             }
             
-            if (totalLength === 0) return contour;
+            if (totalLength === 0) return rotatedContour;
             
-            const sampleInterval = totalLength / targetSamples;
+            // Step 5: Resample to exactly targetSamples points (samples 1 to N)
             const resampled = [];
-            
             let currentDistance = 0;
             let segmentIndex = 0;
-            let segmentProgress = 0;
             
-            for (let i = 0; i < targetSamples; i++) {
-                const targetDistance = (i / targetSamples) * totalLength;
+            // Sample from index 1 to N (N=targetSamples)
+            for (let sampleNum = 1; sampleNum <= targetSamples; sampleNum++) {
+                // Calculate target distance for this sample (evenly distributed from 0 to totalLength)
+                const targetDistance = ((sampleNum - 1) / targetSamples) * totalLength;
                 
                 // Find which segment contains this target distance
                 while (segmentIndex < segmentLengths.length - 1 && 
@@ -2201,12 +2249,12 @@
                 
                 // Interpolate within the segment
                 const remainingDist = targetDistance - currentDistance;
-                segmentProgress = segmentLengths[segmentIndex] > 0 ? 
+                let segmentProgress = segmentLengths[segmentIndex] > 0 ? 
                     remainingDist / segmentLengths[segmentIndex] : 0;
                 segmentProgress = Math.max(0, Math.min(1, segmentProgress));
                 
-                const p1 = contour[segmentIndex];
-                const p2 = contour[(segmentIndex + 1) % contour.length];
+                const p1 = rotatedContour[segmentIndex];
+                const p2 = rotatedContour[(segmentIndex + 1) % rotatedContour.length];
                 
                 resampled.push({
                     x: p1.x + (p2.x - p1.x) * segmentProgress,
@@ -2232,11 +2280,15 @@
          * - 1 grid square = 1 unit × 1 unit = 1 unit²
          * - Area from Sheets is in grid squares (units²)
          * 
+         * SAMPLING:
+         * - Fixed N=1000 samples
+         * - Starts from topmost point (angle = π/2 in unit coords)
+         * - Proceeds clockwise (decreasing angle)
+         * 
          * @param {Object} sheetsRecord - Record with centroid and area from Sheets
-         * @param {number} numPoints - Number of points to use for the circle (default: 100)
          * @returns {Object} - Shape object with contour, centroid, etc.
          */
-        function createShapeFromSheetsData(sheetsRecord, numPoints = 100) {
+        function createShapeFromSheetsData(sheetsRecord) {
             if (!sheetsRecord || !sheetsRecord.centroid) {
                 return null;
             }
@@ -2252,10 +2304,18 @@
             // For very small areas, use a minimum visible radius
             const effectiveRadius = Math.max(radius, 0.1); // Minimum 0.1 units for visibility
             
-            // Create circular contour with the calculated radius
+            // Fixed N=1000 samples to match the new sampling system
+            const numPoints = MIN_CONTOUR_SAMPLES;  // 1000
+            
+            // Create circular contour:
+            // - Start from topmost point (angle = π/2 in unit coords, highest Y)
+            // - Go CLOCKWISE (decreasing angle in unit coords)
+            // Sample 1 to N (N=1000)
             const unitContour = [];
             for (let i = 0; i < numPoints; i++) {
-                const angle = (2 * Math.PI * i) / numPoints;
+                // Start at π/2 (top), go clockwise (decreasing angle)
+                // Sample i corresponds to angle: π/2 - (2π * i / numPoints)
+                const angle = (Math.PI / 2) - (2 * Math.PI * i / numPoints);
                 unitContour.push({
                     x: cx + effectiveRadius * Math.cos(angle),
                     y: cy + effectiveRadius * Math.sin(angle)
@@ -2394,9 +2454,9 @@
                     const finalContour = ensureContourClosed(orderedContour, null);
                     
                     if (finalContour.length >= 3) {
-                        // Calculate adaptive sample count based on perimeter
+                        // Fixed N=1000 samples for all shapes
                         const adaptiveSamples = calculateAdaptiveSampleCount(finalContour);
-                        console.log(`  📐 Red shape: adaptive sample count = ${adaptiveSamples} (min: 100)`);
+                        console.log(`  📐 Red shape: N=${adaptiveSamples} samples, topmost start, clockwise`);
                         const resampled = resampleContour(finalContour, adaptiveSamples);
                         
                         // CENTROID: Calculate from uniformly resampled contour (matches drawing tool)
@@ -2524,7 +2584,7 @@
                     
                     if (finalContour.length >= 3) {
                         const adaptiveSamples = calculateAdaptiveSampleCount(finalContour);
-                        console.log(`  📐 Blue shape: adaptive sample count = ${adaptiveSamples} (min: 100)`);
+                        console.log(`  📐 Blue shape: N=${adaptiveSamples} samples, topmost start, clockwise`);
                         const resampled = resampleContour(finalContour, adaptiveSamples);
                         
                         // CENTROID: Calculate from uniformly resampled contour (matches drawing tool)
@@ -2656,19 +2716,23 @@
         // ============================================
         
         function normalizeContour(contour) {
-            // Normalize contour to ensure consistent winding direction (counter-clockwise)
+            // Normalize contour to ensure consistent CLOCKWISE winding direction
+            // This matches the clockwise direction enforced during resampling
             if (!contour || contour.length < 3) return contour;
             
-            // Check winding order (sum of (x2-x1)*(y2+y1) - positive = clockwise)
-            let windingSum = 0;
+            // Check winding order using signed area formula
+            // signedArea = 0.5 * Σ(x_i * y_{i+1} - x_{i+1} * y_i)
+            // In unit coordinates (Y up): positive = counter-clockwise, negative = clockwise
+            let signedArea = 0;
             for (let i = 0; i < contour.length; i++) {
                 const p1 = contour[i];
                 const p2 = contour[(i + 1) % contour.length];
-                windingSum += (p2.x - p1.x) * (p2.y + p1.y);
+                signedArea += (p1.x * p2.y - p2.x * p1.y);
             }
+            signedArea *= 0.5;
             
-            // If clockwise, reverse to make counter-clockwise
-            if (windingSum > 0) {
+            // If counter-clockwise (positive), reverse to make clockwise
+            if (signedArea > 0) {
                 return [contour[0], ...contour.slice(1).reverse()];
             }
             
@@ -2688,7 +2752,7 @@
                     y: p.y - cy
                 }));
                 
-                // Apply winding normalization (ensures counter-clockwise direction)
+                // Apply winding normalization (ensures clockwise direction)
                 const normalizedContour = normalizeContour(centeredContour);
                 
                 return {
@@ -2705,7 +2769,7 @@
             if (shapes.length === 1) return shapes[0].contour;
             
             // Find the maximum sample count among all shapes for consistent averaging
-            // This preserves the highest resolution available
+            // With fixed N=1000, this should be consistent, but we still check
             let maxSamples = MIN_CONTOUR_SAMPLES;
             const sampleCounts = [];
             for (const shape of shapes) {
@@ -2716,7 +2780,7 @@
                     }
                 }
             }
-            console.log(`    📊 Averaging ${shapes.length} shapes: sample counts = [${sampleCounts.join(', ')}] → using ${maxSamples}`);
+            console.log(`    📊 Averaging ${shapes.length} shapes: all with N=${maxSamples} samples`);
             
             // Resample all shapes to the common count for averaging
             const resampledShapes = shapes.map(shape => {
@@ -2776,7 +2840,7 @@
             }
             
             // Final step: Resample to match drawing tool's even sampling formula
-            // This ensures the median shape has evenly spaced points like the drawing tool
+            // This ensures the mean shape has evenly spaced points like the drawing tool
             return resampleContourLikeDrawingTool(avgContour);
         }
         
@@ -2785,8 +2849,8 @@
          * 
          * Strategy:
          * 1. Average all contours first (no individual scaling)
-         * 2. Calculate median area of all input shapes
-         * 3. Scale the final averaged shape once to match the median area
+         * 2. Calculate mean area of all input shapes
+         * 3. Scale the final averaged shape once to match the mean area
          * 
          * This avoids distortion from scaling individual shapes differently.
          */
@@ -2794,7 +2858,7 @@
             if (shapes.length === 0) return null;
             if (shapes.length === 1) return shapes[0].contour;
             
-            // Step 1: Calculate median area of all input shapes
+            // Step 1: Calculate mean area of all input shapes
             const areas = [];
             for (const shape of shapes) {
                 if (shape.contour && shape.contour.length >= 3) {
@@ -2807,12 +2871,10 @@
             
             if (areas.length === 0) return null;
             
-            // Calculate median area
-            const sortedAreas = [...areas].sort((a, b) => a - b);
-            const medianArea = sortedAreas.length % 2 === 0
-                ? (sortedAreas[sortedAreas.length / 2 - 1] + sortedAreas[sortedAreas.length / 2]) / 2
-                : sortedAreas[Math.floor(sortedAreas.length / 2)];
-            console.log(`    📐 ${colorLabel}: median area = ${medianArea.toFixed(3)} units² from ${areas.length} shapes`);
+            // Calculate mean area
+            const sumAreas = areas.reduce((acc, a) => acc + a, 0);
+            const meanArea = sumAreas / areas.length;
+            console.log(`    📐 ${colorLabel}: mean area = ${meanArea.toFixed(3)} units² from ${areas.length} shapes`);
             
             // Step 2: Calculate the averaged contour using the standard method (no scaling)
             // Find the maximum sample count among all shapes
@@ -2881,9 +2943,9 @@
                 return avgContour;
             }
             
-            // Step 4: Scale the averaged contour to match the median input area
-            const scaleFactor = Math.sqrt(medianArea / avgArea);
-            console.log(`    📏 ${colorLabel}: scaling area ${avgArea.toFixed(3)} → ${medianArea.toFixed(3)} (scale: ${scaleFactor.toFixed(3)})`);
+            // Step 4: Scale the averaged contour to match the mean input area
+            const scaleFactor = Math.sqrt(meanArea / avgArea);
+            console.log(`    📏 ${colorLabel}: scaling area ${avgArea.toFixed(3)} → ${meanArea.toFixed(3)} (scale: ${scaleFactor.toFixed(3)})`);
             
             // Calculate centroid of averaged contour for scaling
             let cx = 0, cy = 0;
@@ -2909,65 +2971,94 @@
         }
         
         /**
-         * Resample a contour using the same formula as the drawing tool
-         * Drawing tool: numSamples = Math.max(100, Math.floor(totalLength / 0.1))
-         * This provides ~10 samples per unit of path length for even spacing
+         * Resample a contour to fixed N=1000 samples, starting from the topmost point
+         * and proceeding CLOCKWISE around the contour.
+         * 
+         * "Topmost" in unit/grid coordinates means highest Y value.
+         * "Clockwise" is visual clockwise when viewing the screen (top → right → bottom → left).
          * 
          * @param {Array} contour - Contour in unit coordinates [{x, y}, ...]
-         * @returns {Array} - Resampled contour with even spacing
+         * @returns {Array} - Resampled contour with N=1000 samples, starting from topmost point, going clockwise
          */
         function resampleContourLikeDrawingTool(contour) {
             if (!contour || contour.length < 2) return contour;
             
-            // Calculate total path length in unit coordinates
+            // Step 1: Find the topmost point (highest Y in unit/grid coordinates)
+            let topmostIndex = 0;
+            let topmostY = contour[0].y;
+            for (let i = 1; i < contour.length; i++) {
+                if (contour[i].y > topmostY) {  // Higher Y = more topmost in grid
+                    topmostY = contour[i].y;
+                    topmostIndex = i;
+                }
+            }
+            
+            // Step 2: Rotate contour to start from topmost point
+            let rotatedContour = [
+                ...contour.slice(topmostIndex),
+                ...contour.slice(0, topmostIndex)
+            ];
+            
+            // Step 3: Check winding direction and ensure CLOCKWISE
+            // In grid/unit coordinates (Y up, standard math), clockwise has NEGATIVE signed area
+            // Formula: signedArea = 0.5 * Σ(x_i * y_{i+1} - x_{i+1} * y_i)
+            let signedArea = 0;
+            for (let i = 0; i < rotatedContour.length; i++) {
+                const p1 = rotatedContour[i];
+                const p2 = rotatedContour[(i + 1) % rotatedContour.length];
+                signedArea += (p1.x * p2.y - p2.x * p1.y);
+            }
+            signedArea *= 0.5;
+            
+            // If positive (counter-clockwise in standard math coords), reverse to make clockwise
+            // Keep first point, reverse the rest
+            if (signedArea > 0) {
+                rotatedContour = [rotatedContour[0], ...rotatedContour.slice(1).reverse()];
+            }
+            
+            // Step 4: Calculate total path length in unit coordinates
             let totalLength = 0;
             const segmentLengths = [];
             
-            for (let i = 0; i < contour.length; i++) {
-                const p1 = contour[i];
-                const p2 = contour[(i + 1) % contour.length];
+            for (let i = 0; i < rotatedContour.length; i++) {
+                const p1 = rotatedContour[i];
+                const p2 = rotatedContour[(i + 1) % rotatedContour.length];
                 const len = Math.sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2);
                 segmentLengths.push(len);
                 totalLength += len;
             }
             
-            if (totalLength === 0) return contour;
+            if (totalLength === 0) return rotatedContour;
             
-            // Use drawing tool's formula: at least 100 samples, or ~10 per unit length
-            const numSamples = Math.max(100, Math.floor(totalLength / 0.1));
-            const sampleInterval = totalLength / numSamples;
+            // Step 5: Fixed N=1000 samples
+            const numSamples = MIN_CONTOUR_SAMPLES;  // 1000
             
             const resampled = [];
             let currentDistance = 0;
             let segmentIndex = 0;
             
-            // Add first point
-            resampled.push({ x: contour[0].x, y: contour[0].y });
-            
-            // Sample remaining points evenly along the path
-            for (let sample = 1; sample < numSamples; sample++) {
-                const targetDistance = sample * sampleInterval;
+            // Sample from 1 to N (N=1000)
+            for (let sampleNum = 1; sampleNum <= numSamples; sampleNum++) {
+                const targetDistance = ((sampleNum - 1) / numSamples) * totalLength;
                 
                 // Find which segment contains this target distance
-                while (segmentIndex < segmentLengths.length && 
+                while (segmentIndex < segmentLengths.length - 1 && 
                        currentDistance + segmentLengths[segmentIndex] < targetDistance) {
                     currentDistance += segmentLengths[segmentIndex];
                     segmentIndex++;
                 }
-                
-                if (segmentIndex >= segmentLengths.length) break;
                 
                 // Interpolate within the segment
                 const remainingDist = targetDistance - currentDistance;
                 const segmentProgress = segmentLengths[segmentIndex] > 0 ? 
                     remainingDist / segmentLengths[segmentIndex] : 0;
                 
-                const p1 = contour[segmentIndex];
-                const p2 = contour[(segmentIndex + 1) % contour.length];
+                const p1 = rotatedContour[segmentIndex];
+                const p2 = rotatedContour[(segmentIndex + 1) % rotatedContour.length];
                 
                 resampled.push({
-                    x: p1.x + (p2.x - p1.x) * segmentProgress,
-                    y: p1.y + (p2.y - p1.y) * segmentProgress
+                    x: p1.x + (p2.x - p1.x) * Math.max(0, Math.min(1, segmentProgress)),
+                    y: p1.y + (p2.y - p1.y) * Math.max(0, Math.min(1, segmentProgress))
                 });
             }
             
@@ -3020,14 +3111,14 @@
         // STATISTICS CALCULATIONS
         // ============================================
         
-        function calculateMedianRadius(shapes) {
+        function calculateMeanRadius(shapes) {
             if (shapes.length === 0) return 0;
             
             const shapeRadii = [];
             
             for (const shape of shapes) {
                 if (shape.contour && shape.contour.length > 0) {
-                    // Calculate median distance from centroid to all contour points
+                    // Calculate mean distance from centroid to all contour points
                     const cx = shape.centroid.x;
                     const cy = shape.centroid.y;
                     
@@ -3035,12 +3126,9 @@
                         Math.sqrt((point.x - cx) ** 2 + (point.y - cy) ** 2)
                     );
                     
-                    // Get median distance for this shape
-                    const sorted = [...distances].sort((a, b) => a - b);
-                    const mid = Math.floor(sorted.length / 2);
-                    const shapeRadius = sorted.length % 2 === 0
-                        ? (sorted[mid - 1] + sorted[mid]) / 2
-                        : sorted[mid];
+                    // Get mean distance for this shape
+                    const sum = distances.reduce((acc, d) => acc + d, 0);
+                    const shapeRadius = sum / distances.length;
                     
                     shapeRadii.push(shapeRadius);
                 }
@@ -3048,15 +3136,12 @@
             
             if (shapeRadii.length === 0) return 0;
             
-            // Return median of all shape radii
-            const sorted = [...shapeRadii].sort((a, b) => a - b);
-            const mid = Math.floor(sorted.length / 2);
-            return sorted.length % 2 === 0
-                ? (sorted[mid - 1] + sorted[mid]) / 2
-                : sorted[mid];
+            // Return mean of all shape radii
+            const sum = shapeRadii.reduce((acc, r) => acc + r, 0);
+            return sum / shapeRadii.length;
         }
         
-        function calculateContourMedianRadius(contour) {
+        function calculateContourMeanRadius(contour) {
             if (!contour || contour.length === 0) return 0;
             
             // Calculate centroid
@@ -3073,12 +3158,9 @@
                 Math.sqrt((p.x - cx) ** 2 + (p.y - cy) ** 2)
             );
             
-            // Return median distance
-            const sorted = [...distances].sort((a, b) => a - b);
-            const mid = Math.floor(sorted.length / 2);
-            return sorted.length % 2 === 0
-                ? (sorted[mid - 1] + sorted[mid]) / 2
-                : sorted[mid];
+            // Return mean distance
+            const sum = distances.reduce((acc, d) => acc + d, 0);
+            return sum / distances.length;
         }
         
         /**
@@ -3089,11 +3171,11 @@
         /**
          * Calculate area statistics for a set of shapes
          * @param {Array} shapes - Array of shape objects with contour property
-         * @returns {Object} - { median, stdDev, min, max, areas, diagnostics }
+         * @returns {Object} - { mean, stdDev, min, max, areas, diagnostics }
          */
         function calculateAreaStatistics(shapes) {
             if (!shapes || shapes.length === 0) {
-                return { median: 0, stdDev: 0, min: 0, max: 0, areas: [], diagnostics: { total: 0, noContour: 0, shortContour: 0, zeroArea: 0, valid: 0, sheetsCreated: 0 } };
+                return { mean: 0, stdDev: 0, min: 0, max: 0, areas: [], diagnostics: { total: 0, noContour: 0, shortContour: 0, zeroArea: 0, valid: 0, sheetsCreated: 0 } };
             }
             
             // Diagnostic tracking
@@ -3134,18 +3216,15 @@
             });
             
             if (areas.length === 0) {
-                return { median: 0, stdDev: 0, min: 0, max: 0, areas: [], diagnostics };
+                return { mean: 0, stdDev: 0, min: 0, max: 0, areas: [], diagnostics };
             }
             
-            // Calculate median (primary statistic)
-            const sortedAreas = [...areas].sort((a, b) => a - b);
-            const mid = Math.floor(sortedAreas.length / 2);
-            const median = sortedAreas.length % 2 === 0
-                ? (sortedAreas[mid - 1] + sortedAreas[mid]) / 2
-                : sortedAreas[mid];
+            // Calculate mean (primary statistic)
+            const sum = areas.reduce((acc, a) => acc + a, 0);
+            const mean = sum / areas.length;
             
-            // Calculate standard deviation (using median for robustness)
-            const squaredDiffs = areas.map(a => (a - median) ** 2);
+            // Calculate standard deviation (using mean)
+            const squaredDiffs = areas.map(a => (a - mean) ** 2);
             const variance = squaredDiffs.reduce((sum, d) => sum + d, 0) / areas.length;
             const stdDev = Math.sqrt(variance);
             
@@ -3153,17 +3232,17 @@
             const min = Math.min(...areas);
             const max = Math.max(...areas);
             
-            return { median, stdDev, min, max, areas, diagnostics };
+            return { mean, stdDev, min, max, areas, diagnostics };
         }
         
         /**
          * Calculate centroid statistics for a set of shapes
-         * Returns median, stdDev for both X and Y coordinates
+         * Returns mean, stdDev for both X and Y coordinates
          */
         function calculateCentroidStatistics(shapes) {
             if (!shapes || shapes.length === 0) {
                 return {
-                    medianX: 0, medianY: 0,
+                    meanX: 0, meanY: 0,
                     stdDevX: 0, stdDevY: 0,
                     minX: 0, maxX: 0,
                     minY: 0, maxY: 0,
@@ -3185,7 +3264,7 @@
             
             if (xCoords.length === 0) {
                 return {
-                    medianX: 0, medianY: 0,
+                    meanX: 0, meanY: 0,
                     stdDevX: 0, stdDevY: 0,
                     minX: 0, maxX: 0,
                     minY: 0, maxY: 0,
@@ -3193,21 +3272,15 @@
                 };
             }
             
-            // Calculate medians
-            const sortedX = [...xCoords].sort((a, b) => a - b);
-            const sortedY = [...yCoords].sort((a, b) => a - b);
-            const mid = Math.floor(sortedX.length / 2);
+            // Calculate means
+            const sumX = xCoords.reduce((acc, x) => acc + x, 0);
+            const sumY = yCoords.reduce((acc, y) => acc + y, 0);
+            const meanX = sumX / xCoords.length;
+            const meanY = sumY / yCoords.length;
             
-            const medianX = sortedX.length % 2 === 0 
-                ? (sortedX[mid - 1] + sortedX[mid]) / 2 
-                : sortedX[mid];
-            const medianY = sortedY.length % 2 === 0 
-                ? (sortedY[mid - 1] + sortedY[mid]) / 2 
-                : sortedY[mid];
-            
-            // Calculate standard deviations (using median for robustness)
-            const squaredDiffsX = xCoords.map(x => (x - medianX) ** 2);
-            const squaredDiffsY = yCoords.map(y => (y - medianY) ** 2);
+            // Calculate standard deviations (using mean)
+            const squaredDiffsX = xCoords.map(x => (x - meanX) ** 2);
+            const squaredDiffsY = yCoords.map(y => (y - meanY) ** 2);
             const stdDevX = Math.sqrt(squaredDiffsX.reduce((sum, d) => sum + d, 0) / xCoords.length);
             const stdDevY = Math.sqrt(squaredDiffsY.reduce((sum, d) => sum + d, 0) / yCoords.length);
             
@@ -3218,7 +3291,7 @@
             const maxY = Math.max(...yCoords);
             
             return {
-                medianX, medianY,
+                meanX, meanY,
                 stdDevX, stdDevY,
                 minX, maxX,
                 minY, maxY,
@@ -3432,9 +3505,9 @@
                 drawContour(ctx, blueAvg, '#0000cc', 5, 1.0, false);
             }
             
-            // Calculate statistics (using median for robustness)
-            const redMedianR = redAvg ? calculateContourMedianRadius(redAvg) : calculateMedianRadius(redShapes);
-            const blueMedianR = blueAvg ? calculateContourMedianRadius(blueAvg) : calculateMedianRadius(blueShapes);
+            // Calculate statistics (using mean)
+            const redMeanR = redAvg ? calculateContourMeanRadius(redAvg) : calculateMeanRadius(redShapes);
+            const blueMeanR = blueAvg ? calculateContourMeanRadius(blueAvg) : calculateMeanRadius(blueShapes);
             
             // Draw frequency label at top
             ctx.save();
@@ -3451,11 +3524,11 @@
             
             // Red stats (in-phase)
             ctx.fillStyle = '#cc0000';
-            ctx.fillText(`N=${redShapes.length}, median r=${redMedianR.toFixed(2)} (in-phase)`, 20, 55);
+            ctx.fillText(`N=${redShapes.length}, mean r=${redMeanR.toFixed(2)} (in-phase)`, 20, 55);
             
             // Blue stats (out-of-phase)  
             ctx.fillStyle = '#0000cc';
-            ctx.fillText(`N=${blueShapes.length}, median r=${blueMedianR.toFixed(2)} (out-of-phase)`, 20, 80);
+            ctx.fillText(`N=${blueShapes.length}, mean r=${blueMeanR.toFixed(2)} (out-of-phase)`, 20, 80);
             
             ctx.restore();
         }
@@ -3702,6 +3775,9 @@
                 return;
             }
             
+            // Reset overlap replacement tracking
+            extremeOverlapReplacements = [];
+            
             // Open progress dropdown
             document.getElementById('progress-dropdown').open = true;
             document.getElementById('status-log').innerHTML = '';
@@ -3873,6 +3949,17 @@
                                 s.filename = displayName;
                             });
                             
+                            // Track extreme overlap replacements
+                            if (shapes.redCopiedFromBlue) {
+                                extremeOverlapReplacements.push({
+                                    participant: participant,
+                                    trial: trial,
+                                    frequency: freq,
+                                    color: 'red',
+                                    reason: shapes.redExtractionNote || 'extreme overlap - red replaced with blue contour'
+                                });
+                            }
+                            
                             allRedShapes.push(...shapes.redShapes);
                             allBlueShapes.push(...shapes.blueShapes);
                             
@@ -4011,6 +4098,9 @@
                 // Also open area stats dropdown
                 document.getElementById('area-stats-dropdown').open = true;
                 
+                // Display extreme overlap replacement statistics
+                displayOverlapReplacements();
+                
             } catch (error) {
                 console.error('Analysis error:', error);
                 addLogEntry(`ERROR: ${error.message}`);
@@ -4039,11 +4129,11 @@
                             <tr class="bg-gray-50">
                                 <th class="border border-gray-300 px-4 py-2"></th>
                                 <th class="border border-gray-300 px-3 py-1 text-center text-red-500 text-xs">N</th>
-                                <th class="border border-gray-300 px-3 py-1 text-center text-red-500 text-xs">Median ± SD</th>
+                                <th class="border border-gray-300 px-3 py-1 text-center text-red-500 text-xs">Mean ± SD</th>
                                 <th class="border border-gray-300 px-3 py-1 text-center text-red-500 text-xs">Min</th>
                                 <th class="border border-gray-300 px-3 py-1 text-center text-red-500 text-xs">Max</th>
                                 <th class="border border-gray-300 px-3 py-1 text-center text-blue-500 text-xs">N</th>
-                                <th class="border border-gray-300 px-3 py-1 text-center text-blue-500 text-xs">Median ± SD</th>
+                                <th class="border border-gray-300 px-3 py-1 text-center text-blue-500 text-xs">Mean ± SD</th>
                                 <th class="border border-gray-300 px-3 py-1 text-center text-blue-500 text-xs">Min</th>
                                 <th class="border border-gray-300 px-3 py-1 text-center text-blue-500 text-xs">Max</th>
                             </tr>
@@ -4070,11 +4160,11 @@
                     <tr class="hover:bg-gray-50">
                         <td class="border border-gray-300 px-4 py-2 font-medium">${freqLabel}</td>
                         <td class="border border-gray-300 px-3 py-2 text-center text-red-600">${redStats.areas.length}</td>
-                        <td class="border border-gray-300 px-3 py-2 text-center text-red-600">${redStats.median.toFixed(2)} ± ${redStats.stdDev.toFixed(2)}</td>
+                        <td class="border border-gray-300 px-3 py-2 text-center text-red-600">${redStats.mean.toFixed(2)} ± ${redStats.stdDev.toFixed(2)}</td>
                         <td class="border border-gray-300 px-3 py-2 text-center text-red-600">${redStats.min.toFixed(2)}</td>
                         <td class="border border-gray-300 px-3 py-2 text-center text-red-600">${redStats.max.toFixed(2)}</td>
                         <td class="border border-gray-300 px-3 py-2 text-center text-blue-600">${blueStats.areas.length}</td>
-                        <td class="border border-gray-300 px-3 py-2 text-center text-blue-600">${blueStats.median.toFixed(2)} ± ${blueStats.stdDev.toFixed(2)}</td>
+                        <td class="border border-gray-300 px-3 py-2 text-center text-blue-600">${blueStats.mean.toFixed(2)} ± ${blueStats.stdDev.toFixed(2)}</td>
                         <td class="border border-gray-300 px-3 py-2 text-center text-blue-600">${blueStats.min.toFixed(2)}</td>
                         <td class="border border-gray-300 px-3 py-2 text-center text-blue-600">${blueStats.max.toFixed(2)}</td>
                     </tr>
@@ -4204,10 +4294,10 @@
                                 <tr class="bg-gray-50">
                                     <th class="border border-gray-300 px-4 py-2"></th>
                                     <th class="border border-gray-300 px-3 py-1 text-center text-red-500 text-xs">N</th>
-                                    <th class="border border-gray-300 px-3 py-1 text-center text-red-500 text-xs">Median (x, y)</th>
+                                    <th class="border border-gray-300 px-3 py-1 text-center text-red-500 text-xs">Mean (x, y)</th>
                                     <th class="border border-gray-300 px-3 py-1 text-center text-red-500 text-xs">SD (x, y)</th>
                                     <th class="border border-gray-300 px-3 py-1 text-center text-blue-500 text-xs">N</th>
-                                    <th class="border border-gray-300 px-3 py-1 text-center text-blue-500 text-xs">Median (x, y)</th>
+                                    <th class="border border-gray-300 px-3 py-1 text-center text-blue-500 text-xs">Mean (x, y)</th>
                                     <th class="border border-gray-300 px-3 py-1 text-center text-blue-500 text-xs">SD (x, y)</th>
                                 </tr>
                             </thead>
@@ -4226,10 +4316,10 @@
                     <tr class="hover:bg-gray-50">
                         <td class="border border-gray-300 px-4 py-2 font-medium">${freqLabel}</td>
                         <td class="border border-gray-300 px-3 py-2 text-center text-red-600">${redCentroidStats.count}</td>
-                        <td class="border border-gray-300 px-3 py-2 text-center text-red-600 font-medium">(${redCentroidStats.medianX.toFixed(2)}, ${redCentroidStats.medianY.toFixed(2)})</td>
+                        <td class="border border-gray-300 px-3 py-2 text-center text-red-600 font-medium">(${redCentroidStats.meanX.toFixed(2)}, ${redCentroidStats.meanY.toFixed(2)})</td>
                         <td class="border border-gray-300 px-3 py-2 text-center text-red-600">(${redCentroidStats.stdDevX.toFixed(2)}, ${redCentroidStats.stdDevY.toFixed(2)})</td>
                         <td class="border border-gray-300 px-3 py-2 text-center text-blue-600">${blueCentroidStats.count}</td>
-                        <td class="border border-gray-300 px-3 py-2 text-center text-blue-600 font-medium">(${blueCentroidStats.medianX.toFixed(2)}, ${blueCentroidStats.medianY.toFixed(2)})</td>
+                        <td class="border border-gray-300 px-3 py-2 text-center text-blue-600 font-medium">(${blueCentroidStats.meanX.toFixed(2)}, ${blueCentroidStats.meanY.toFixed(2)})</td>
                         <td class="border border-gray-300 px-3 py-2 text-center text-blue-600">(${blueCentroidStats.stdDevX.toFixed(2)}, ${blueCentroidStats.stdDevY.toFixed(2)})</td>
                     </tr>
                 `;
@@ -4241,7 +4331,7 @@
                     </div>
                     <div class="mt-2 text-xs text-gray-500">
                         <p><strong>Note:</strong> Centroid coordinates are in unit space (range: -10 to +10).</p>
-                        <p class="mt-1">Median values are more robust to outliers.</p>
+                        <p class="mt-1">Mean values are used for all statistics.</p>
                     </div>
                 </div>
             `;
@@ -4502,6 +4592,151 @@
             if (validationResults.discrepancies.length > 0) {
                 addLogEntry(`⚠️ ${validationResults.discrepancies.length} centroid discrepancies found (see validation report)`);
             }
+        }
+        
+        /**
+         * Display extreme overlap replacement statistics
+         * Shows which shapes were replaced due to extreme overlap (red < 30% of blue pixels)
+         */
+        function displayOverlapReplacements() {
+            const container = document.getElementById('overlap-stats-container');
+            const dropdown = document.getElementById('overlap-stats-dropdown');
+            
+            if (extremeOverlapReplacements.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-6">
+                        <div class="text-green-600 font-semibold text-lg mb-2">✓ No Extreme Overlap Replacements</div>
+                        <p class="text-gray-600">All shapes were extracted normally without requiring replacement.</p>
+                    </div>
+                `;
+                addLogEntry('✓ No extreme overlap shape replacements required');
+                return;
+            }
+            
+            // Group by frequency
+            const byFrequency = {};
+            for (const replacement of extremeOverlapReplacements) {
+                const freq = replacement.frequency;
+                if (!byFrequency[freq]) {
+                    byFrequency[freq] = [];
+                }
+                byFrequency[freq].push(replacement);
+            }
+            
+            // Count by color
+            const redCount = extremeOverlapReplacements.filter(r => r.color === 'red').length;
+            const blueCount = extremeOverlapReplacements.filter(r => r.color === 'blue').length;
+            
+            let html = `
+                <div class="space-y-4">
+                    <!-- Summary -->
+                    <div class="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                        <h4 class="font-bold text-orange-800 text-lg mb-2">⚠️ Extreme Overlap Replacements Summary</h4>
+                        <div class="grid grid-cols-3 gap-4 text-center">
+                            <div class="bg-white rounded-lg p-3 border border-orange-200">
+                                <div class="text-2xl font-bold text-orange-600">${extremeOverlapReplacements.length}</div>
+                                <div class="text-sm text-gray-600">Total Replacements</div>
+                            </div>
+                            <div class="bg-white rounded-lg p-3 border border-red-200">
+                                <div class="text-2xl font-bold text-red-600">${redCount}</div>
+                                <div class="text-sm text-gray-600">Red Shapes</div>
+                            </div>
+                            <div class="bg-white rounded-lg p-3 border border-blue-200">
+                                <div class="text-2xl font-bold text-blue-600">${blueCount}</div>
+                                <div class="text-sm text-gray-600">Blue Shapes</div>
+                            </div>
+                        </div>
+                        <p class="text-sm text-gray-600 mt-3">
+                            Shapes are replaced when red has &lt;30% of blue's pixel count (severe occlusion). 
+                            The blue contour is used for red, translated to red's centroid position.
+                        </p>
+                    </div>
+                    
+                    <!-- By Frequency -->
+                    <div class="bg-white border border-gray-200 rounded-lg p-4">
+                        <h4 class="font-bold text-gray-800 mb-3">Replacements by Frequency</h4>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm border-collapse">
+                                <thead>
+                                    <tr class="bg-gray-100">
+                                        <th class="border border-gray-300 px-3 py-2 text-left">Frequency</th>
+                                        <th class="border border-gray-300 px-3 py-2 text-center">Count</th>
+                                        <th class="border border-gray-300 px-3 py-2 text-left">Participants (Trial)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+            `;
+            
+            // Sort frequencies
+            const sortedFreqs = Object.keys(byFrequency).sort((a, b) => parseFloat(a) - parseFloat(b));
+            
+            for (const freq of sortedFreqs) {
+                const replacements = byFrequency[freq];
+                const participantList = replacements.map(r => {
+                    const colorIcon = r.color === 'red' ? '🔴' : '🔵';
+                    return `${colorIcon} ${r.participant}${r.trial !== '1' ? ` (T${r.trial})` : ''}`;
+                }).join(', ');
+                
+                html += `
+                    <tr class="hover:bg-gray-50">
+                        <td class="border border-gray-200 px-3 py-2 font-semibold">${freq} Hz</td>
+                        <td class="border border-gray-200 px-3 py-2 text-center font-bold text-orange-600">${replacements.length}</td>
+                        <td class="border border-gray-200 px-3 py-2 text-xs">${participantList}</td>
+                    </tr>
+                `;
+            }
+            
+            html += `
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- Full Details (Expandable) -->
+                    <details class="bg-gray-50 border border-gray-200 rounded-lg">
+                        <summary class="cursor-pointer p-3 font-semibold text-gray-700">
+                            📋 Full Replacement Details (click to expand)
+                        </summary>
+                        <div class="p-3 border-t border-gray-200">
+                            <table class="w-full text-xs border-collapse">
+                                <thead>
+                                    <tr class="bg-gray-100">
+                                        <th class="border border-gray-300 px-2 py-1">Participant</th>
+                                        <th class="border border-gray-300 px-2 py-1">Trial</th>
+                                        <th class="border border-gray-300 px-2 py-1">Frequency</th>
+                                        <th class="border border-gray-300 px-2 py-1">Color</th>
+                                        <th class="border border-gray-300 px-2 py-1">Reason</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+            `;
+            
+            for (const r of extremeOverlapReplacements) {
+                const colorClass = r.color === 'red' ? 'text-red-600 bg-red-50' : 'text-blue-600 bg-blue-50';
+                html += `
+                    <tr class="hover:bg-gray-100">
+                        <td class="border border-gray-200 px-2 py-1">${r.participant}</td>
+                        <td class="border border-gray-200 px-2 py-1">${r.trial}</td>
+                        <td class="border border-gray-200 px-2 py-1">${r.frequency} Hz</td>
+                        <td class="border border-gray-200 px-2 py-1 font-bold ${colorClass}">${r.color}</td>
+                        <td class="border border-gray-200 px-2 py-1 text-gray-600">${r.reason}</td>
+                    </tr>
+                `;
+            }
+            
+            html += `
+                                </tbody>
+                            </table>
+                        </div>
+                    </details>
+                </div>
+            `;
+            
+            container.innerHTML = html;
+            dropdown.open = true;
+            
+            // Log summary
+            addLogEntry(`⚠️ ${extremeOverlapReplacements.length} shapes replaced due to extreme overlap (Red: ${redCount}, Blue: ${blueCount})`);
         }
         
         async function downloadAllComposites() {
